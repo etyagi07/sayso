@@ -1,0 +1,6 @@
+.venv/
+.session.json
+.env
+__pycache__/
+.daily_limits.json
+.DS_Store
