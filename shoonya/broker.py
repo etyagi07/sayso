@@ -258,3 +258,138 @@ def _f(v):
         return float(v)
     except (TypeError, ValueError):
         return None
+
+
+# --- options ---------------------------------------------------------------
+
+def quote_checked(exchange, token, expect_tsym=None, tries=4):
+    """get_quotes, but verify the response is for the instrument we asked for.
+
+    The quote endpoint intermittently returns the PREVIOUSLY requested
+    instrument instead of the one requested - observed returning the Nifty
+    index (23188) in place of an option premium (106). Pricing an order off
+    that would size it ~200x too large, so every quote used for an order
+    must be identity-checked, not just status-checked.
+    """
+    for _ in range(tries):
+        q = api().get_quotes(exchange=exchange, token=str(token))
+        if not q or q.get("stat") != "Ok":
+            continue
+        if str(q.get("token", "")) == str(token):
+            return q
+        if expect_tsym and q.get("tsym") == expect_tsym:
+            return q
+        # Wrong instrument came back - discard and ask again.
+    return None
+
+
+def option_contract(option_type, symbol="NIFTY", strike=None, expiry=None):
+    """Resolve the ATM (or given) option and attach a live quote.
+
+    option_type: 'CE' or 'PE'. Strike defaults to at-the-money, derived from
+    spot; expiry defaults to the nearest upcoming one.
+    """
+    from shoonya import instruments as ins
+
+    spot = None
+    if strike is None:
+        # Spot from the index itself; NSE works even when NFO search does not.
+        idx = quote_checked("NSE", "26000")
+        if not idx:
+            return {"error": "Could not read Nifty spot"}
+        spot = float(idx["lp"])
+
+    c = ins.find(symbol=symbol, option_type=option_type,
+                 strike=strike, expiry=expiry, spot=spot)
+    if not c:
+        return {"error": f"No {symbol} {option_type} contract found"}
+
+    q = quote_checked("NFO", c["token"], expect_tsym=c["tsym"])
+    if not q:
+        return {"error": f"No trustworthy quote for {c['tsym']} - either the "
+                         f"F&O segment is disabled, or the feed kept returning "
+                         f"a different instrument.",
+                "contract": c}
+
+    return {
+        "tsym": c["tsym"], "token": c["token"], "exchange": "NFO",
+        "lot": c["lot"], "tick": c["tick"], "strike": c["strike"],
+        "expiry": str(c["expiry"]), "option_type": option_type,
+        "ltp": _f(q.get("lp")), "bid": _f(q.get("bp1")), "ask": _f(q.get("sp1")),
+        "spot": _f(q.get("sptprc")), "oi": q.get("oi"),
+        "lower_circuit": _f(q.get("lc")), "upper_circuit": _f(q.get("uc")),
+        "strike_adjusted_from": c.get("strike_adjusted_from"),
+    }
+
+
+def marketable_price(side, quote, buffer_ticks=2):
+    """A limit price that crosses the spread, so it fills like a market order.
+
+    Shoonya rejects MKT outright (only LMT and SL-LMT are accepted), so
+    "buy at market" means a limit placed through the touch. The buffer
+    absorbs a tick or two of movement between quoting and arriving; the
+    worst case is still bounded, which a true market order would not be.
+    """
+    tick = quote.get("tick") or 0.05
+    if side == "B":
+        base = quote.get("ask") or quote.get("ltp")
+        if base is None:
+            return None
+        price = base + buffer_ticks * tick
+        cap = quote.get("upper_circuit")
+        if cap:
+            price = min(price, cap)
+    else:
+        base = quote.get("bid") or quote.get("ltp")
+        if base is None:
+            return None
+        price = base - buffer_ticks * tick
+        floor = quote.get("lower_circuit")
+        if floor:
+            price = max(price, floor)
+    return round(round(price / tick) * tick, 2)
+
+
+def place_direct(side, tsym, quantity, price, exchange="NFO", product="M",
+                 remarks="sayso"):
+    """Place an order for an already-resolved symbol.
+
+    The equity path searches for the instrument by spoken name; derivatives
+    come pre-resolved from the contract master, so this skips resolution
+    and sends exactly the symbol given.
+    """
+    a = api()
+    values = {
+        "ordersource": "API",
+        "uid": getattr(a, "_NorenApi__username", None),
+        "actid": getattr(a, "_NorenApi__accountid", None),
+        "trantype": side,
+        "prd": product,
+        "exch": exchange,
+        "tsym": urllib.parse.quote_plus(tsym),
+        "qty": str(int(quantity)),
+        "dscqty": "0",
+        "prctyp": "LMT",
+        "prc": str(float(price)),
+        "ret": "DAY",
+        "remarks": remarks,
+    }
+    res = _raw_post("/PlaceOrder", values)
+    out = {"action": "BUY" if side == "B" else "SELL", "symbol": tsym,
+           "quantity": int(quantity), "price": price, "exchange": exchange,
+           "product": product, "raw_response": res}
+    if res.get("stat") == "Ok" and res.get("norenordno"):
+        out["status"] = "ACCEPTED_PENDING"
+        out["order_no"] = res["norenordno"]
+    else:
+        out["status"] = "REJECTED"
+        out["reason"] = res.get("emsg") or f"No order number. Response: {res}"
+    return out
+
+
+def place_direct_and_confirm(side, tsym, quantity, price, **kwargs):
+    result = place_direct(side, tsym, quantity, price, **kwargs)
+    if result.get("status") != "ACCEPTED_PENDING":
+        return result
+    result["outcome"] = order_status(result["order_no"])
+    return result

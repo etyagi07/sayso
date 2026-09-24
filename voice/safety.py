@@ -18,13 +18,23 @@ STATE_FILE = Path(__file__).resolve().parent.parent / ".daily_limits.json"
 
 @dataclass
 class Limits:
-    # Testing posture, 2026-09-23: YESBANK only, tiny size.
+    # Equity testing posture: YESBANK only, tiny size.
     allowlist: set = field(default_factory=lambda: {"YESBANK"})
     max_order_value: float = 100.0
     max_quantity: int = 50
     allow_market_orders: bool = False
     max_orders_per_day: int = 20
     max_value_per_day: float = 500.0
+
+    # --- options -------------------------------------------------------
+    # One Nifty lot is 65 units, so an ATM premium near 125 costs ~8,100.
+    # These cap the damage from a misheard command; they are NOT a view on
+    # what is a sensible trade.
+    option_allowlist: set = field(default_factory=lambda: {"NIFTY"})
+    max_lots: int = 1
+    max_premium_per_unit: float = 200.0
+    max_option_order_value: float = 15000.0
+    max_option_orders_per_day: int = 10
 
 
 LIMITS = Limits()
@@ -106,6 +116,45 @@ def check(symbol, quantity, price, price_type, limits=LIMITS):
     return value
 
 
+def check_option(tsym, underlying, lots, lot_size, price, limits=LIMITS):
+    """Limits for an option order. Returns (total_value, units)."""
+    if limits.option_allowlist and underlying.upper() not in limits.option_allowlist:
+        raise Rejected(
+            f"{underlying} options are not on the allowlist. Only "
+            f"{', '.join(sorted(limits.option_allowlist))} is permitted."
+        )
+    if lots <= 0:
+        raise Rejected(f"{lots} lots is not a valid order size.")
+    if lots > limits.max_lots:
+        raise Rejected(
+            f"{lots} lots exceeds the cap of {limits.max_lots} lot"
+            f"{'s' if limits.max_lots != 1 else ''} per order."
+        )
+    if price is None:
+        raise Rejected("No price available to value this option against.")
+    if price > limits.max_premium_per_unit:
+        raise Rejected(
+            f"Premium {price:.2f} is above the {limits.max_premium_per_unit:.0f} "
+            f"per-unit limit - that contract is too expensive to trade here."
+        )
+
+    units = lots * lot_size
+    value = round(units * price, 2)
+    if value > limits.max_option_order_value:
+        raise Rejected(
+            f"That order is worth {value:,.2f} rupees, over the "
+            f"{limits.max_option_order_value:,.0f} rupee option limit."
+        )
+
+    counters = _today_counters()
+    if counters["orders"] >= limits.max_option_orders_per_day:
+        raise Rejected(
+            f"Daily option order limit reached "
+            f"({limits.max_option_orders_per_day} orders)."
+        )
+    return value, units
+
+
 def record(value):
     """Count an order that actually went out."""
     counters = _today_counters()
@@ -123,4 +172,8 @@ def status():
         "orders_today": c["orders"],
         "value_today": c["value"],
         "orders_remaining": LIMITS.max_orders_per_day - c["orders"],
+        "option_allowlist": sorted(LIMITS.option_allowlist),
+        "max_lots": LIMITS.max_lots,
+        "max_premium_per_unit": LIMITS.max_premium_per_unit,
+        "max_option_order_value": LIMITS.max_option_order_value,
     }

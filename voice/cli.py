@@ -22,9 +22,10 @@ def confirm(preview):
 def main():
     s = safety.status()
     print(f"\n{G}● LISTENING{X} {DIM}(text mode){X}")
-    print(f"{DIM}  limits: {s['max_order_value']:.0f}/order · "
-          f"{', '.join(s['allowlist'])} only · "
-          f"{'market off' if not s['market_orders'] else 'market ON'}{X}")
+    print(f"{DIM}  options: {', '.join(s['option_allowlist'])} · "
+          f"{s['max_lots']} lot max · premium <= {s['max_premium_per_unit']:.0f}{X}")
+    print(f"{DIM}  equity : {', '.join(s['allowlist'])} · "
+          f"{s['max_order_value']:.0f}/order{X}")
     print(f"{DIM}  try: 'buy 1 yesbank' · 'what's yesbank at' · 'funds' · "
           f"'what do i own' · ctrl-c to quit{X}\n")
 

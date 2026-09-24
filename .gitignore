@@ -4,3 +4,4 @@
 __pycache__/
 .daily_limits.json
 .DS_Store
+data/

@@ -90,11 +90,19 @@ def connect(interactive=True):
 
 
 def _session_alive(api):
-    """A cheap authenticated call; anything other than a clean result means re-login."""
+    """A cheap authenticated call; anything but a clean Ok means re-login.
+
+    The SDK returns a dict on failure too - {"stat": "Not_Ok", "emsg":
+    "Session Expired"} - so testing for None lets a dead session through
+    and every later call fails in a confusing way.
+    """
     try:
-        return api.get_limits() is not None
+        res = api.get_limits()
     except Exception:
         return False
+    if not isinstance(res, dict):
+        return False
+    return res.get("stat") == "Ok"
 
 
 def _env(name):

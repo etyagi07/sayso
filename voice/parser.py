@@ -21,6 +21,10 @@ WORD_NUMBERS = {
 
 BUY_WORDS = r"buy|get|purchase|pick up|grab|long"
 SELL_WORDS = r"sell|dump|offload|exit|close|short"
+# Closing an existing position, as distinct from selling to open.
+EXIT_WORDS = r"exit|close|square off|squareoff|square|unwind|get out of"
+OPTION_WORDS = {"call": "CE", "calls": "CE", "ce": "CE",
+                "put": "PE", "puts": "PE", "pe": "PE"}
 
 
 def _number(text):
@@ -60,8 +64,37 @@ def parse(transcript):
     if re.search(r"\b(limits?|caps?|safety)\b", t):
         return {"intent": "limits"}
 
+    # --- options: "buy call", "exit put" ---------------------------------
+    words_all = t.split()
+    opt = next((OPTION_WORDS[w] for w in words_all if w in OPTION_WORDS), None)
+    if opt:
+        is_exit = bool(re.search(rf"\b({EXIT_WORDS})\b", t))
+        is_buy = bool(re.search(rf"\b({BUY_WORDS})\b", t))
+        is_sell = bool(re.search(r"\b(sell|short|write)\b", t))
+        if is_exit:
+            return {"intent": "option_exit", "option_type": opt}
+        if is_buy:
+            lots = None
+            idx = next(i for i, w in enumerate(words_all) if w in OPTION_WORDS)
+            # Walk back from the option word to find the number that ends
+            # right before it, so "buy two calls" reads 2 and "buy calls"
+            # reads nothing.
+            for start in range(max(0, idx - 2), idx):
+                value, used = numbers.parse(words_all[start:idx])
+                if value is not None and start + used == idx:
+                    lots = value
+                    break
+            return {"intent": "option_buy", "option_type": opt, "lots": lots}
+        if is_sell:
+            # Selling to open is unlimited-risk and sounds too much like
+            # "exit". Refuse rather than guess which was meant.
+            return {"intent": "option_refused", "option_type": opt,
+                    "reason": "Selling options to open is not supported. "
+                              "Say 'exit call' or 'exit put' to close a position."}
+        return {"intent": "option_quote", "option_type": opt}
+
     # "what is yesbank at" / "price of yesbank" / "yesbank quote"
-    m = re.search(r"(?:price of|quote for|quote|what'?s|how much is)\s+([a-z0-9 ]+?)"
+    m = re.search(r"(?:price of|quote for|quote|what'?s|what is|how much is)\s+([a-z0-9 ]+?)"
                   r"(?:\s+(?:at|trading|going|doing|now))?$", t)
     if m:
         return {"intent": "quote", "name": canonical(m.group(1).strip())}

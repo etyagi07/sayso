@@ -18,9 +18,11 @@ def main():
     s = safety.status()
     print(f"\n{DIM}┄┄┄ voice trading ┄┄┄{X}")
     warm_up()
-    print(f"{DIM}  limits: {s['max_order_value']:.0f}/order · "
-          f"{', '.join(s['allowlist'])} only · market orders "
-          f"{'off' if not s['market_orders'] else 'ON'}{X}")
+    print(f"{DIM}  options: {', '.join(s['option_allowlist'])} · "
+          f"{s['max_lots']} lot max · premium <= {s['max_premium_per_unit']:.0f} · "
+          f"<= {s['max_option_order_value']:,.0f}/order{X}")
+    print(f"{DIM}  equity : {', '.join(s['allowlist'])} · "
+          f"{s['max_order_value']:.0f}/order{X}")
     print(f"\n{G}● READY{X} {DIM}- press Enter to speak · 't' to type · ctrl-c to quit{X}\n")
 
     while True:
