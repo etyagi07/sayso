@@ -85,8 +85,9 @@ def _ask_secret(label, shown, current):
     because nothing echoes there is no way to tell it failed. Offer the
     visible path rather than leaving people stuck.
     """
-    print(f"    {DIM}typed hidden - paste should work; if it does not, "
-          f"press Enter on an empty line{X}")
+    print(f"    {DIM}Nothing appears as you type - that is normal.{X}")
+    print(f"    {DIM}Paste ONCE, then press Enter. "
+          f"Stuck? Press Enter on an empty line.{X}")
     while True:
         try:
             with warnings.catch_warnings():
@@ -96,6 +97,7 @@ def _ask_secret(label, shown, current):
             entered = ""
 
         if entered:
+            entered = _dedupe_paste(entered)
             return entered
         if current:
             return current
@@ -111,7 +113,33 @@ def _ask_secret(label, shown, current):
             return entered
 
 
-def prompt(save=None):
+def _dedupe_paste(text):
+    """Spot the same value pasted several times over.
+
+    Hidden entry shows nothing, so it is easy to paste again thinking the
+    first one did not register. The result is a valid-looking string that
+    is simply the secret repeated, and the broker rejects it with an
+    unhelpful error.
+    """
+    # Smallest repeating unit of a plausible credential length. Smallest
+    # wins because 8 copies of a 64-char secret is also 2 copies of a
+    # 256-char block, and 64 is the one actually wanted. The lower bound
+    # stops "aaaa" being read as "a" repeated.
+    for size in range(16, len(text) // 2 + 1):
+        if len(text) % size:
+            continue
+        unit = text[:size]
+        if unit * (len(text) // size) != text:
+            continue
+        copies = len(text) // size
+        print(f"\n    {Y}That looks like the same {size}-character value "
+              f"pasted {copies} times.{X}")
+        answer = input(f"    Use a single copy? [{G}Y{X}/n]: ").strip().lower()
+        if answer in ("", "y", "yes"):
+            print(f"    {DIM}using {size} characters{X}")
+            return unit
+        break
+    return text
     """Ask for the three values. Returns them, and saves if asked to."""
     stored = read_env_file()
     print(f"\n{DIM}Shoonya API credentials{X}")
@@ -131,8 +159,11 @@ def prompt(save=None):
 
     secret_len = len(values["SHOONYA_SECRET_CODE"])
     if secret_len != 64:
-        print(f"\n{Y}  Note: the secret code is usually 64 characters; "
-              f"this one is {secret_len}.{X}")
+        print(f"\n{Y}  The secret code is usually 64 characters; this one "
+              f"is {secret_len}.{X}")
+        answer = input(f"  Enter it again? [{G}Y{X}/n]: ").strip().lower()
+        if answer in ("", "y", "yes"):
+            values["SHOONYA_SECRET_CODE"] = _ask_secret("Secret code", "", "")
 
     if save is None:
         answer = input(f"\n  Save these to .env for next time? "
