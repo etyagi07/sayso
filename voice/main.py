@@ -6,6 +6,12 @@ Press Enter to speak. Whisper runs locally. Orders always require a typed
 `y` on screen before anything is sent - speech proposes, you dispose.
 """
 
+import os
+
+from shoonya import profile
+
+profile.from_argv()
+
 from voice import safety, speak, watch
 from voice.agent import friendly, handle
 from voice.cli import confirm
@@ -17,6 +23,8 @@ G, R, Y, DIM, X = "\033[92m", "\033[91m", "\033[93m", "\033[2m", "\033[0m"
 def main():
     s = safety.status()
     print(f"\n{DIM}┄┄┄ voice trading ┄┄┄{X}")
+    print(f"  {Y}account: {os.environ.get('SHOONYA_USER_ID', '?')} "
+          f"({profile.label()}){X}")
     warm_up()
     caps = " · ".join(f"{n} {c} lots" for n, c in s["max_lots"].items())
     print(f"{DIM}  options: {caps}{X}")

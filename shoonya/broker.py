@@ -101,57 +101,6 @@ def order_book():
     return _book("/OrderBook", with_account=False)
 
 
-def resolve_symbol(spoken_name, exchange="NSE"):
-    """'reliance' -> {'tsym': 'RELIANCE-EQ', 'token': '2885'}.
-
-    Returns the best match plus alternatives, so the agent can ask
-    "did you mean ...?" instead of guessing on an ambiguous name.
-    """
-    res = api().searchscrip(exchange=exchange, searchtext=spoken_name)
-    if not res or not res.get("values"):
-        return None
-    values = res["values"]
-    # Indices come back with nontrd=1 - quotable, never orderable. If one
-    # matched, refuse rather than silently substituting a different
-    # instrument: a voice user who says "nifty" must not get an ETF by
-    # surprise. Make them name it.
-    blocked = [v for v in values if v.get("nontrd", "0") == "1"]
-    tradeable = [v for v in values if v.get("nontrd", "0") != "1"]
-    if blocked:
-        return {"error": f"{blocked[0]['tsym']} is an index, not a tradeable "
-                         f"instrument.",
-                "not_tradeable": [v["tsym"] for v in blocked],
-                "did_you_mean": [v["tsym"] for v in tradeable[:5]],
-                "needs_confirmation": True}
-    if not tradeable:
-        return {"error": f"No tradeable instrument matching {spoken_name!r}"}
-    values = tradeable
-    # Prefer the cash-segment equity line when one exists.
-    best = next((v for v in values if v["tsym"].endswith("-EQ")), values[0])
-    return {
-        "tsym": best["tsym"],
-        "token": best["token"],
-        "exchange": exchange,
-        "alternatives": [v["tsym"] for v in values[:5] if v["tsym"] != best["tsym"]],
-    }
-
-
-def quote(spoken_name, exchange="NSE"):
-    sym = resolve_symbol(spoken_name, exchange)
-    if not sym:
-        return {"error": f"No instrument matching {spoken_name!r} on {exchange}"}
-    q = quote_checked(exchange, sym["token"], expect_tsym=sym["tsym"])
-    if not q:
-        return {"error": f"No trustworthy quote for {sym['tsym']}"}
-    return {
-        "symbol": q["tsym"],
-        "ltp": float(q["lp"]),
-        "open": _f(q.get("o")), "high": _f(q.get("h")),
-        "low": _f(q.get("l")), "prev_close": _f(q.get("c")),
-        "change_pct": _f(q.get("pc")),
-    }
-
-
 def positions(include_closed=False):
     """Open positions with both flavours of P&L.
 

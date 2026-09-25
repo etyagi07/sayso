@@ -41,8 +41,10 @@ _sdk.requests = _TimedRequests()
 WS = "wss://api.shoonya.com/NorenWSAPI/"
 AUTHORIZE_URL = "https://api.shoonya.com/OAuthlogin/authorize/oauth"
 
+from shoonya import profile
+
 ROOT = Path(__file__).resolve().parent.parent
-SESSION_FILE = ROOT / ".session.json"
+SESSION_FILE = profile.session_file()
 
 
 def _load_dotenv_force():
@@ -51,7 +53,7 @@ def _load_dotenv_force():
     Used after credentials are entered interactively, so the new values
     take effect in a process that started without them.
     """
-    env_file = ROOT / ".env"
+    env_file = profile.env_file()
     if not env_file.exists():
         return
     for line in env_file.read_text().splitlines():
@@ -64,7 +66,7 @@ def _load_dotenv_force():
 
 def _load_dotenv():
     """Populate os.environ from .env, without pulling in python-dotenv."""
-    env_file = ROOT / ".env"
+    env_file = profile.env_file()
     if not env_file.exists():
         return
     for line in env_file.read_text().splitlines():

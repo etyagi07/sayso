@@ -13,7 +13,10 @@ from pathlib import Path
 
 # Daily counters must survive a restart, or the caps mean nothing: quitting
 # and relaunching would hand you a fresh allowance.
-STATE_FILE = Path(__file__).resolve().parent.parent / ".daily_limits.json"
+from shoonya import profile
+
+# Per account: each has its own allowance.
+STATE_FILE = profile.limits_file()
 
 
 @dataclass

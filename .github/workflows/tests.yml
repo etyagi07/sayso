@@ -1,0 +1,28 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # sounddevice needs PortAudio present to import, even though the
+      # tests never open a microphone.
+      - run: sudo apt-get update && sudo apt-get install -y libportaudio2
+      - run: pip install -r requirements.txt
+      # Every suite runs offline against a fake broker - no credentials,
+      # no network, no audio.
+      - name: run tests
+        run: |
+          status=0
+          for t in tests/test_*.py; do
+            echo "== $t"
+            python "$t" || status=1
+          done
+          exit $status

@@ -17,6 +17,7 @@ MODULES = [
     "voice.agent", "voice.parser", "voice.strikes", "voice.numbers",
     "voice.fuzzy", "voice.safety", "voice.config", "voice.listen",
     "voice.calibrate", "voice.doctor", "voice.cli", "voice.main",
+    "voice.stocks", "voice.speak", "voice.watch",
 ]
 
 # Names other code calls by hand, so a rename or deletion is caught here.
@@ -25,8 +26,9 @@ PUBLIC = {
                             "read_env_file", "write_env_file"],
     "shoonya.broker": ["place", "wait_for_outcome", "order_book",
                        "option_contract", "marketable_price",
-                       "quote_checked", "positions", "funds", "quote",
-                       "resolve_symbol", "BrokerError"],
+                       "quote_checked", "positions", "funds",
+                       "BrokerError"],
+    "voice.stocks": ["resolve", "add", "remove", "all_stocks", "symbols"],
     "voice.parser": ["parse"],
     "voice.strikes": ["resolve", "read_order", "number_spans"],
     "voice.safety": ["check", "check_option", "record", "status"],
@@ -62,6 +64,13 @@ def test_sdk_calls_have_a_timeout():
     finally:
         requests.post = original
     assert seen.get("timeout"), "SDK request sent without a timeout"
+
+
+def test_prefix_search_is_gone():
+    # The broker's prefix search turned "idea" into IDEAFORGE. Stock names
+    # are matched against voice.stocks only; the search must not come back.
+    import shoonya.broker as b
+    assert not hasattr(b, "resolve_symbol")
 
 
 def test_public_names_exist():

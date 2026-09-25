@@ -572,8 +572,10 @@ def _execute(side, tsym, quantity, price, exchange, product, did, value,
 
     filled, total = state.get("filled") or 0, state.get("quantity") or quantity
     avg = state.get("avg_fill_price")
+    avg = f"{avg:.2f}" if isinstance(avg, (int, float)) else avg
     if status == "COMPLETE":
-        return {"speak": f"Filled. {did} at {avg}.", "outcome": "filled",
+        return {"speak": f"Filled. {did[:1].upper()}{did[1:]} at {avg}.",
+                "outcome": "filled",
                 "confirmed": True, "data": {**sent, "state": state}}
     if filled and filled < total:
         return {"speak": f"Part filled: {filled} of {total} at {avg}. The "

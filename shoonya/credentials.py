@@ -8,15 +8,21 @@ a choice rather than a requirement - some people would rather type it
 each day than leave it on disk.
 """
 
-import getpass
+from shoonya import profile as _profile
+
+_profile.from_argv()
+
+import getpass  # noqa: E402
 import os
 import stat
 import sys
 import warnings
 from pathlib import Path
 
+from shoonya import profile
+
 ROOT = Path(__file__).resolve().parent.parent
-ENV_FILE = ROOT / ".env"
+ENV_FILE = profile.env_file()
 
 FIELDS = [
     ("SHOONYA_CLIENT_ID", "Client ID", "usually your user ID plus a suffix, e.g. ABC123_U", False),
@@ -156,7 +162,7 @@ def _dedupe_paste(text):
 def prompt(save=None):
     """Ask for the three values. Returns them, and saves if asked to."""
     stored = read_env_file()
-    print(f"\n{DIM}Shoonya API credentials{X}")
+    print(f"\n{DIM}Shoonya API credentials - account: {profile.label()}{X}")
     print(f"{DIM}  From your API app registration at shoonya.com.{X}")
     if stored:
         print(f"{DIM}  Leave blank to keep an existing value.{X}")

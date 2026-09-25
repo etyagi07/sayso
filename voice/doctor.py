@@ -6,6 +6,10 @@ Written so that someone on a machine nobody can see can paste the output
 and get a useful answer. Every failure names its own fix.
 """
 
+from shoonya import profile
+
+profile.from_argv()
+
 import platform
 import sys
 from pathlib import Path
@@ -31,7 +35,7 @@ def check(name, ok, detail="", fix="", blocking=True):
 
 
 def main():
-    print(f"\n{DIM}sayso doctor{X}")
+    print(f"\n{DIM}sayso doctor - account: {profile.label()}{X}")
     print(f"  {platform.system()} {platform.release()} · {platform.machine()} "
           f"· python {platform.python_version()}\n")
 
@@ -96,7 +100,7 @@ def main():
           f"threshold {config.get('silence_rms')}",
           "python -m voice.calibrate")
 
-    env = ROOT / ".env"
+    env = profile.env_file()
     if not env.exists():
         check("credentials", False, "not set",
               "python -m shoonya.credentials")

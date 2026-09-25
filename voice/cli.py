@@ -3,6 +3,10 @@
 Run:  .venv/bin/python -m voice.cli
 """
 
+from shoonya import profile
+
+profile.from_argv()
+
 from voice import safety, speak
 from voice.agent import handle
 

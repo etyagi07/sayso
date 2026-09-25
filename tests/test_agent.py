@@ -68,9 +68,6 @@ class Fake:
         safety._spent_today.update(safety._blank())
 
         defaults = {
-            "resolve_symbol": lambda name, exchange="NSE": {
-                "tsym": "YESBANK-EQ", "token": "11915", "exchange": "NSE",
-                "alternatives": []},
             "quote_checked": lambda *a, **k: dict(QUOTE),
             "positions": lambda include_closed=False: [],
             "place": self._place,
@@ -179,12 +176,12 @@ def test_confirmed_symbol_is_the_one_sent():
     # names were found by prefix search - which is how "idea" became
     # IDEAFORGE. Stocks now come from a known list; the broker is never
     # searched, and what was confirmed is exactly what is sent.
-    searched = []
+    calls = []
     shown = {}
-    with Fake(resolve_symbol=lambda *a, **k: searched.append(a)) as f:
+    with Fake(_raw_post=lambda path, values: calls.append(path) or {}) as f:
         agent.handle("buy one yesbank intraday",
                      lambda p: (shown.update(p), True)[1])
-        assert not searched, "searched the broker for a stock name"
+        assert "/SearchScrip" not in calls, "searched the broker for a name"
         assert f.sent[0]["tsym"] == shown["symbol"] == "YESBANK-EQ"
 
 

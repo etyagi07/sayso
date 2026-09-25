@@ -8,3 +8,5 @@ data/
 .env.*
 config.json
 stocks.json
+.session*.json
+.daily_limits*.json
