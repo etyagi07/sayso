@@ -23,13 +23,14 @@ MODULES = [
 PUBLIC = {
     "shoonya.credentials": ["prompt", "ensure", "have_credentials",
                             "read_env_file", "write_env_file"],
-    "shoonya.broker": ["order", "option_contract", "marketable_price",
-                       "quote_checked", "place_direct_and_confirm",
-                       "positions", "funds", "quote", "resolve_symbol"],
+    "shoonya.broker": ["place", "wait_for_outcome", "order_book",
+                       "option_contract", "marketable_price",
+                       "quote_checked", "positions", "funds", "quote",
+                       "resolve_symbol", "BrokerError"],
     "voice.parser": ["parse"],
     "voice.strikes": ["resolve", "read_order", "number_spans"],
     "voice.safety": ["check", "check_option", "record", "status"],
-    "voice.agent": ["handle"],
+    "voice.agent": ["handle", "_execute"],
     "voice.config": ["load", "save", "backend", "is_calibrated"],
 }
 

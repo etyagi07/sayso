@@ -12,6 +12,17 @@ from voice.parser import parse
 
 def handle(transcript, confirm=None):
     """Run one utterance. `confirm` takes a preview dict, returns bool."""
+    try:
+        return _handle(transcript, confirm)
+    except b.BrokerError as e:
+        # Only reads raise this - placing an order never does - so nothing
+        # has been sent. Say so, rather than letting a failed read pass as
+        # "you have no positions".
+        return {"speak": f"I couldn't reach the broker, so I haven't done "
+                         f"anything. {e}", "blocked": True, "broker_error": True}
+
+
+def _handle(transcript, confirm):
     intent = parse(transcript)
     kind = intent["intent"]
 
@@ -30,7 +41,7 @@ def handle(transcript, confirm=None):
                  f"now {p['ltp']:.2f}" for p in pos]
         return {"speak": "You hold " + "; ".join(parts), "data": pos}
     if kind == "orders":
-        book = b.api().get_order_book() or []
+        book = b.order_book()
         live = [o for o in book if o.get("status") in ("OPEN", "TRIGGER_PENDING")]
         return {"speak": f"{len(live)} open of {len(book)} orders today.",
                 "data": live}
@@ -78,21 +89,33 @@ def handle(transcript, confirm=None):
                          f"Please say the exact name.",
                 "data": sym, "needs_disambiguation": True}
 
-    q = b.api().get_quotes(exchange="NSE", token=sym["token"]) or {}
+    q = b.quote_checked("NSE", sym["token"], expect_tsym=sym["tsym"])
+    if not q:
+        return {"speak": f"I couldn't get a reliable price for "
+                         f"{sym['tsym']}.", "blocked": True}
     ltp = b._f(q.get("lp"))
     side_word = "buy" if intent["side"] == "B" else "sell"
+    opening = intent["side"] == "B"
+    product = "C"
 
     quantity = intent["quantity"]
-    if quantity is None:
-        if intent["side"] == "S":
-            held = next((p["qty"] for p in b.positions()
-                         if p["symbol"] == sym["tsym"]), 0)
-            if not held:
-                return {"speak": f"You don't hold any {sym['tsym']} to sell."}
+    if not opening:
+        # A sell closes something you hold. Selling more than that would
+        # be opening a short - refused, as selling options to open is.
+        position = next((p for p in b.positions()
+                         if p["symbol"] == sym["tsym"] and p["qty"] > 0), None)
+        if position is None:
+            return {"speak": f"You don't hold any {sym['tsym']} to sell."}
+        held = position["qty"]
+        if quantity is None:
             quantity = held
-        else:
-            return {"speak": f"How many {sym['tsym']} do you want to {side_word}?",
-                    "needs_quantity": True, "data": sym}
+        elif quantity > held:
+            return {"speak": f"You hold {held} {sym['tsym']}. I won't sell "
+                             f"more than you hold.", "blocked": True}
+        product = position.get("prd") or product
+    elif quantity is None:
+        return {"speak": f"How many {sym['tsym']} do you want to {side_word}?",
+                "needs_quantity": True, "data": sym}
 
     # Everything goes at market: a limit priced through the touch so it
     # fills now. A price said out loud is shown on the confirmation screen
@@ -102,10 +125,14 @@ def handle(transcript, confirm=None):
     if price is None:
         return {"speak": f"No usable price for {sym['tsym']}.", "blocked": True}
 
-    try:
-        value = safety.check(sym["tsym"], quantity, price, "LMT")
-    except safety.Rejected as e:
-        return {"speak": str(e), "blocked": True}
+    value = round(quantity * price, 2)
+    if opening:
+        # Limits apply to opening a position. Closing one is never blocked -
+        # a cap that stops you exiting traps you in the trade.
+        try:
+            value = safety.check(sym["tsym"], quantity, price, "LMT")
+        except safety.Rejected as e:
+            return {"speak": str(e), "blocked": True}
 
     preview = {
         "action": side_word.upper(), "symbol": sym["tsym"], "quantity": quantity,
@@ -122,17 +149,20 @@ def handle(transcript, confirm=None):
     if confirm is None or not confirm(preview):
         return {"speak": "Cancelled.", "preview": preview, "confirmed": False}
 
+    # The confirmation screen can change the price; send what was shown.
     price = preview["price"]
-    try:
-        value = safety.check(sym["tsym"], quantity, price, "LMT")
-    except safety.Rejected as e:
-        return {"speak": str(e), "blocked": True}
+    value = round(quantity * price, 2)
+    if opening:
+        try:
+            value = safety.check(sym["tsym"], quantity, price, "LMT")
+        except safety.Rejected as e:
+            return {"speak": str(e), "blocked": True}
 
-    result = b.place_and_confirm(intent["side"], sym["tsym"], quantity,
-                                 price=price, live=True)
     name = sym["tsym"].replace("-EQ", "")
-    return _report(result, f"{side_word} {quantity} {name}", value,
-                   segment="equity")
+    return _execute(intent["side"], sym["tsym"], quantity, price,
+                    exchange="NSE", product=product,
+                    did=f"{'bought' if opening else 'sold'} {quantity} {name}",
+                    value=value, opening=opening, segment="equity")
 
 
 # --- options ---------------------------------------------------------------
@@ -237,11 +267,11 @@ def _handle_option(intent, confirm):
     except safety.Rejected as e:
         return {"speak": str(e), "blocked": True}
 
-    result = b.place_direct_and_confirm("B", c["tsym"], units, price,
-                                        exchange="NFO", product="M")
-    return _report(result,
-                   f"bought {lots} lot{'s' if lots != 1 else ''} of the "
-                   f"{c['strike']} {word}", value)
+    return _execute("B", c["tsym"], units, price, exchange="NFO",
+                    product="M",
+                    did=(f"bought {lots} lot{'s' if lots != 1 else ''} of "
+                         f"the {c['strike']} {word}"),
+                    value=value, opening=True, segment="options")
 
 
 def _exit_option(opt, confirm):
@@ -251,6 +281,14 @@ def _exit_option(opt, confirm):
             and _opt_type_of(p["symbol"]) == opt and p["qty"] != 0]
     if not held:
         return {"speak": f"You have no open {word} position."}
+    if len(held) > 1:
+        # Two positions answer to "exit call". Closing either one on a
+        # guess is exactly what this program refuses to do elsewhere.
+        names = " and ".join(p["symbol"] for p in held)
+        return {"speak": f"You have {len(held)} open {word}s: {names}. "
+                         f"Say which strike to exit.",
+                "blocked": True, "needs_clarification": True,
+                "data": held}
 
     pos = held[0]
     qty = abs(pos["qty"])
@@ -298,9 +336,13 @@ def _exit_option(opt, confirm):
     if confirm is None or not confirm(preview):
         return {"speak": "Cancelled.", "preview": preview, "confirmed": False}
 
-    result = b.place_direct_and_confirm(side, pos["symbol"], qty, price,
-                                        exchange="NFO", product="M")
-    return _report(result, f"exited the {word}", value)
+    # The confirmation screen can change the price; send what was shown.
+    price = preview["price"]
+    value = round(qty * price, 2)
+    return _execute(side, pos["symbol"], qty, price, exchange="NFO",
+                    product=pos.get("prd") or "M",
+                    did=f"exited the {word}", value=value,
+                    opening=False, segment="options")
 
 
 def _opt_type_of(tsym):
@@ -320,18 +362,59 @@ def _token_for(tsym):
     return None
 
 
-def _report(result, did, value, segment="options"):
-    if result.get("status") == "REJECTED":
-        return {"speak": f"Rejected. {result.get('reason','')}", "data": result}
-    outcome = result.get("outcome", {})
-    # The broker accepting an order is not the exchange taking it. Only
-    # count what actually reached the market against the daily allowance.
-    if outcome.get("status") in ("REJECTED", "CANCELED"):
-        return {"speak": f"Rejected. {outcome.get('reason') or ''}".strip(),
-                "data": result}
-    safety.record(value, segment)
-    if outcome.get("status") == "COMPLETE":
-        return {"speak": f"Done, {did} at {outcome.get('avg_fill_price')}.",
-                "data": result, "confirmed": True}
-    return {"speak": f"Order is {outcome.get('status','pending')}, not filled yet.",
-            "data": result, "confirmed": True}
+def _execute(side, tsym, quantity, price, exchange, product, did, value,
+             opening, segment):
+    """Send one confirmed order and say, truthfully, what happened to it.
+
+    `outcome` in the reply is one of filled / partial / resting / rejected /
+    unknown - what the audio layer keys its sounds off.
+    """
+    sent = b.place(side, tsym, quantity, price, exchange, product)
+
+    if sent["status"] == "REJECTED":
+        return {"speak": f"Rejected by the broker. {sent['reason']}".strip(),
+                "outcome": "rejected", "data": sent}
+
+    if sent["status"] == "UNKNOWN":
+        # It may be live. Count it, so a retry cannot slip past the caps,
+        # and tell the user to look before they try again.
+        if opening:
+            safety.record(value, segment)
+        return {"speak": "I can't confirm that order went through. The "
+                         "connection dropped and I couldn't find it in your "
+                         "order book. Check your order book before you try "
+                         "again.",
+                "outcome": "unknown", "data": sent}
+
+    state = b.wait_for_outcome(sent["order_no"])
+    status = state.get("status")
+
+    if status in ("REJECTED", "CANCELED"):
+        reason = state.get("reason") or status.lower()
+        return {"speak": f"Rejected by the exchange. {reason}",
+                "outcome": "rejected", "data": {**sent, "state": state}}
+
+    # It reached the market. Only opening trades count against the caps.
+    if opening:
+        safety.record(value, segment)
+
+    filled, total = state.get("filled") or 0, state.get("quantity") or quantity
+    avg = state.get("avg_fill_price")
+    if status == "COMPLETE":
+        return {"speak": f"Filled. {did} at {avg}.", "outcome": "filled",
+                "confirmed": True, "data": {**sent, "state": state}}
+    if filled and filled < total:
+        return {"speak": f"Part filled: {filled} of {total} at {avg}. The "
+                         f"rest is still working.",
+                "outcome": "partial", "confirmed": True,
+                "data": {**sent, "state": state}}
+    if status in ("OPEN", "PENDING", "TRIGGER_PENDING"):
+        return {"speak": f"Placed but not filled yet. Order "
+                         f"{sent['order_no']} is resting at {price:.2f}.",
+                "outcome": "resting", "confirmed": True,
+                "data": {**sent, "state": state}}
+    return {"speak": f"The broker accepted order {sent['order_no']}, but I "
+                     f"couldn't see what happened to it. Check your order "
+                     f"book.",
+            "outcome": "unknown", "confirmed": True,
+            "data": {**sent, "state": state}}
