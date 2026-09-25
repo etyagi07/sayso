@@ -80,10 +80,32 @@ def _pick_voice():
                              text=True, timeout=5).stdout
     except (OSError, subprocess.SubprocessError):
         return None
+    # Lines look like "Rishi   en_IN   # Hello..." or, for enhanced voices,
+    # "Aman (English (India)) en_IN   # Hello...". Take the name before the
+    # locale, whatever the spacing.
     for line in out.splitlines():
-        if "en_IN" in line:
-            return line.split("  ")[0].strip()
+        m = re.match(r"^(.+?)\s+([a-z]{2}_[A-Z]{2})\s+#", line)
+        if m and m.group(2) == "en_IN":
+            return m.group(1).strip()
     return None
+
+
+def works():
+    """Actually produce speech, silently, to prove the engine and voice
+    are usable - checking the binary exists says nothing about the voice."""
+    if not _available():
+        return False
+    if SYSTEM != "Darwin":
+        return True
+    import tempfile
+    voice = _pick_voice()
+    with tempfile.NamedTemporaryFile(suffix=".aiff") as f:
+        cmd = ["say", "-o", f.name] + (["-v", voice] if voice else []) + ["ok"]
+        try:
+            return subprocess.run(cmd, capture_output=True,
+                                  timeout=10).returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            return False
 
 
 def for_speech(text):

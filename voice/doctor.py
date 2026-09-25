@@ -82,7 +82,7 @@ def main():
               "Windows: Settings > Privacy & security > Microphone.")
 
     from voice import speak
-    audio = speak._available()
+    audio = speak.works()
     check("spoken readback", audio,
           (f"on, voice {speak._pick_voice() or 'default'}" if audio
            and config.get("speak") else "off in config.json" if audio
