@@ -12,6 +12,7 @@ import getpass
 import os
 import stat
 import sys
+import warnings
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -67,6 +68,49 @@ def write_env_file(values):
     ENV_FILE.chmod(stat.S_IRUSR | stat.S_IWUSR)
 
 
+def _ask_plain(label, shown, current, hint):
+    while True:
+        entered = input(f"  {label}{shown}: ").strip()
+        if not entered and current:
+            return current
+        if entered:
+            return entered
+        print(f"    {DIM}{hint}{X}")
+
+
+def _ask_secret(label, shown, current):
+    """Hidden entry, with a visible fallback.
+
+    Some terminals will not deliver a paste to a hidden prompt, and
+    because nothing echoes there is no way to tell it failed. Offer the
+    visible path rather than leaving people stuck.
+    """
+    print(f"    {DIM}typed hidden - paste should work; if it does not, "
+          f"press Enter on an empty line{X}")
+    while True:
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", getpass.GetPassWarning)
+                entered = getpass.getpass(f"  {label}{shown}: ").strip()
+        except (getpass.GetPassWarning, OSError):
+            entered = ""
+
+        if entered:
+            return entered
+        if current:
+            return current
+
+        answer = input(f"    {Y}Show the text while you type or paste "
+                       f"it?{X} [{G}Y{X}/n]: ").strip().lower()
+        if answer not in ("", "y", "yes"):
+            continue
+        entered = input(f"  {label} (visible): ").strip()
+        if entered:
+            print(f"    {DIM}captured {len(entered)} characters - clear your "
+                  f"screen afterwards if anyone can see it{X}")
+            return entered
+
+
 def prompt(save=None):
     """Ask for the three values. Returns them, and saves if asked to."""
     stored = read_env_file()
@@ -81,15 +125,8 @@ def prompt(save=None):
         if current:
             shown = (f" [{'*' * 8}]" if secret
                      else f" [{current}]")
-        while True:
-            question = f"  {label}{shown}: "
-            entered = (getpass.getpass(question) if secret
-                       else input(question)).strip()
-            if not entered and current:
-                entered = current
-            if entered:
-                break
-            print(f"    {DIM}{hint}{X}")
+        entered = (_ask_secret(label, shown, current) if secret
+                   else _ask_plain(label, shown, current, hint))
         values[key] = entered
 
     secret_len = len(values["SHOONYA_SECRET_CODE"])
