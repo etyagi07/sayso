@@ -140,6 +140,9 @@ def _dedupe_paste(text):
             return unit
         break
     return text
+
+
+def prompt(save=None):
     """Ask for the three values. Returns them, and saves if asked to."""
     stored = read_env_file()
     print(f"\n{DIM}Shoonya API credentials{X}")
