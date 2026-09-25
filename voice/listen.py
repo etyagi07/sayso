@@ -13,7 +13,7 @@ import sys
 import numpy as np
 import sounddevice as sd
 
-from voice import config
+from voice import config, speak
 
 SAMPLE_RATE = 16000          # what Whisper expects
 
@@ -79,9 +79,11 @@ def record_until_silence():
     chunks, silent_for, spoke_for = [], 0.0, 0.0
     block = int(SAMPLE_RATE * 0.05)
 
-    with sd.InputStream(samplerate=SAMPLE_RATE, channels=1,
-                        dtype="float32", blocksize=block,
-                        device=config.get("input_device")) as stream:
+    # Wait for any readback to finish, and hold announcements until the
+    # recording is over - otherwise the app can hear itself as a command.
+    with speak.listening(), sd.InputStream(
+            samplerate=SAMPLE_RATE, channels=1, dtype="float32",
+            blocksize=block, device=config.get("input_device")) as stream:
         print(f"  {R}* RECORDING{X} {DIM}(speak, then pause){X}",
               end="", flush=True)
         while True:

@@ -25,6 +25,12 @@ DEFAULTS = {
     "asr_backend": "auto",
     "asr_model": "small.en",
     "input_device": None,      # None = the system default
+    # Spoken readback of every preview and result, with outcome sounds.
+    "speak": True,
+    "voice": None,             # None = an Indian English voice if present
+    "speech_rate": 190,        # words per minute
+    # How long a resting order is followed, to announce its fill.
+    "follow_seconds": 300,
 }
 
 

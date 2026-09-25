@@ -199,6 +199,9 @@ def _handle(transcript, confirm):
         "action": side_word.upper(), "symbol": sym["tsym"], "quantity": quantity,
         "price": price, "value": value, "ltp": ltp, "at_market": True,
         "spoken_price": spoken_price,
+        "say": (f"{side_word.capitalize()} {quantity} "
+                f"{sym['tsym'].replace('-EQ', '')}, about {value:,.0f} "
+                f"rupees."),
         "bid": b._f(q.get("bp1")), "ask": b._f(q.get("sp1")),
         "tick": b._f(q.get("ti")) or 0.05,
         "lower_circuit": b._f(q.get("lc")), "upper_circuit": b._f(q.get("uc")),
@@ -365,6 +368,10 @@ def _handle_option(intent, confirm):
         "lower_circuit": c["lower_circuit"], "upper_circuit": c["upper_circuit"],
         "expiry": c["expiry"], "strike": c["strike"],
         "underlying": u.spoken, "when": _when(c),
+        # What is read aloud: just enough to catch a wrong index, strike,
+        # side or size. The screen carries the rest.
+        "say": (f"Buy {lots} lot{plural}, {u.spoken} {c['strike']} {word}, "
+                f"{_when(c)}, about {value:,.0f} rupees."),
         "spoken": (f"buy {lots} lot{plural} of the {u.spoken} "
                    f"{_expiry_words(c['expiry'])} {c['strike']} {word}, "
                    f"{_when(c)}, {units} units at market, about "
@@ -463,6 +470,8 @@ def _exit_option(intent, confirm):
         "symbol": pos["symbol"], "quantity": qty, "lots": None,
         "price": price, "value": value, "ltp": ltp, "at_market": True,
         "pnl": pnl, "entry": pos.get("avg_price"),
+        "say": (f"Exit {friendly(pos['symbol'])}, about {value:,.0f} "
+                f"rupees." + result_words),
         "bid": view["bid"], "ask": view["ask"], "tick": view["tick"],
         "lower_circuit": view["lower_circuit"],
         "upper_circuit": view["upper_circuit"],

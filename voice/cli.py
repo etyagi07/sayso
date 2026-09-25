@@ -3,7 +3,7 @@
 Run:  .venv/bin/python -m voice.cli
 """
 
-from voice import safety
+from voice import safety, speak
 from voice.agent import handle
 
 G, R, Y, B, DIM, X = ("\033[92m", "\033[91m", "\033[93m",
@@ -18,10 +18,13 @@ def confirm(preview):
     said out loud is the least reliable part of a spoken command.
     May edit `preview` in place; the caller reads the price back.
     """
+    speak.say(preview.get("say") or preview.get("spoken"))
     while True:
         _draw(preview)
         choice = input(f"  {G}y{X} send · {G}p{X} set price · "
                        f"anything else cancels: ").strip().lower()
+        # A key was pressed - the rest of the readback is now in the way.
+        speak.interrupt()
         if choice == "y":
             return True
         if choice != "p":
@@ -126,6 +129,7 @@ def main():
             continue
         colour = R if result.get("blocked") else X
         print(f"  {colour}{result['speak']}{X}")
+        speak.announce(result)
 
 
 if __name__ == "__main__":

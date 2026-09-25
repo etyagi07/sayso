@@ -6,8 +6,8 @@ Press Enter to speak. Whisper runs locally. Orders always require a typed
 `y` on screen before anything is sent - speech proposes, you dispose.
 """
 
-from voice import safety
-from voice.agent import handle
+from voice import safety, speak, watch
+from voice.agent import friendly, handle
 from voice.cli import confirm
 from voice.listen import listen_once, warm_up
 
@@ -48,6 +48,14 @@ def main():
 
         colour = R if result.get("blocked") else X
         print(f"  {colour}{result['speak']}{X}\n")
+        speak.announce(result)
+
+        # An order that is still working gets followed, so its fill is
+        # announced whenever it lands.
+        data = result.get("data") or {}
+        if result.get("outcome") in ("resting", "partial") and data.get("order_no"):
+            what = friendly(data["symbol"]) if data.get("symbol") else "Your order"
+            watch.follow(data["order_no"], what)
 
 
 if __name__ == "__main__":

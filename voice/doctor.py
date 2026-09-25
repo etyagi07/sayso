@@ -81,6 +81,17 @@ def main():
               "       enable your terminal, then fully quit and reopen it.\n"
               "Windows: Settings > Privacy & security > Microphone.")
 
+    from voice import speak
+    audio = speak._available()
+    check("spoken readback", audio,
+          (f"on, voice {speak._pick_voice() or 'default'}" if audio
+           and config.get("speak") else "off in config.json" if audio
+           else "no speech engine found"),
+          "macOS has 'say' built in; on Windows it uses PowerShell; on\n"
+          "Linux install espeak. Orders still work without it - you\n"
+          "just read the screen instead.",
+          blocking=False)
+
     check("microphone calibrated", config.is_calibrated(),
           f"threshold {config.get('silence_rms')}",
           "python -m voice.calibrate")
