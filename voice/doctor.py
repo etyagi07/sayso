@@ -115,19 +115,25 @@ def main():
     if session_ok:
         try:
             import shoonya.broker as b
-            q = b.quote_checked("NSE", "26000")
+            from shoonya import underlyings
+            q = b.quote_checked(*underlyings.get("NIFTY").spot)
             check("market data", bool(q), f"nifty {q['lp']}" if q else "no quote",
                   "The broker returned no data - the market may be closed.")
             uid = getattr(b.api(), "_NorenApi__username", None)
-            res = b._raw_post("/SearchScrip",
-                              {"uid": uid, "exch": "NFO", "stext": "NIFTY"})
-            fo = res.get("stat") == "Ok"
-            check("f&o segment", fo,
-                  "enabled" if fo else res.get("emsg", "")[:40],
-                  "Options need the F&O segment activated with the broker.\n"
-                  "Everything else works without it - equity orders, quotes,\n"
-                  "and the whole voice pipeline.",
-                  blocking=False)
+            # An account can have NSE derivatives without BSE's, so the two
+            # are checked separately: NFO carries Nifty and Bank Nifty
+            # options, BFO carries Sensex.
+            for segment, probe, carries in (
+                    ("NFO", "NIFTY", "Nifty and Bank Nifty options"),
+                    ("BFO", "SENSEX", "Sensex options")):
+                res = b._raw_post("/SearchScrip", {"uid": uid, "exch": segment,
+                                                   "stext": probe})
+                ok = res.get("stat") == "Ok"
+                check(f"{segment} segment", ok,
+                      "enabled" if ok else res.get("emsg", "")[:40],
+                      f"{carries} need the {segment} segment activated "
+                      f"with the broker.\nEverything else still works.",
+                      blocking=False)
         except Exception as e:
             check("market data", False, f"{type(e).__name__}: {str(e)[:40]}")
 

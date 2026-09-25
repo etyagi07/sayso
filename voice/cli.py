@@ -101,9 +101,8 @@ def _set_price(preview):
 def main():
     s = safety.status()
     print(f"\n{G}● LISTENING{X} {DIM}(text mode){X}")
-    print(f"{DIM}  options: {', '.join(s['option_allowlist'])} · "
-          f"{'no lot cap' if s['max_lots'] is None else str(s['max_lots']) + ' lot max'} · "
-          f"premium <= {s['max_premium_per_unit']:.0f}{X}")
+    caps = " · ".join(f"{n} {c} lots" for n, c in s["max_lots"].items())
+    print(f"{DIM}  options: {caps}{X}")
     print(f"{DIM}  equity : {', '.join(s['allowlist'])} · "
           f"{s['max_order_value']:.0f}/order · all at market{X}")
     print(f"{DIM}  try: 'buy 1 yesbank' · 'what's yesbank at' · 'funds' · "

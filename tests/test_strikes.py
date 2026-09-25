@@ -109,6 +109,28 @@ def test_short_runs_are_still_quantities():
     assert o("ten") == (10, None, None)
 
 
+SENSEX = set(range(72400, 75500, 100))
+BANK = set(range(54100, 57100, 100))
+
+
+def test_five_digit_strikes():
+    # BANKNIFTY and SENSEX strikes have five digits and step in 100s, so the
+    # NIFTY-tuned rules have to hold at a different scale.
+    def rs(said, ladder, spot):
+        return resolve(said.split(), ladder, spot, 1500)[0]
+    assert rs("seventy four thousand", SENSEX, 73896) == 74000
+    assert rs("seventy three nine hundred", SENSEX, 73896) == 73900
+    assert rs("seven three nine zero zero", SENSEX, 73896) == 73900
+    assert rs("fifty five six hundred", BANK, 55580) == 55600
+    assert rs("five five six zero zero", BANK, 55580) == 55600
+    assert rs("fifty six thousand", BANK, 55580) == 56000
+
+
+def test_digits_then_scale():
+    # Regression: "seven four thousand" summed 7 + 4 and read as 11,000.
+    assert resolve("seven four thousand".split(), SENSEX, 73896, 1500)[0] == 74000
+
+
 def test_no_numbers():
     assert read_order([], LADDER, SPOT) == (None, None, None)
 

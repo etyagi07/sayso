@@ -35,6 +35,8 @@ PROTECTED = {
     "what", "how", "much", "price", "quote", "limits", "funds", "cash",
     "position", "positions", "own", "have", "point", "lot", "lots", "and",
     "balance", "money", "orders", "order", "nifty", "yesbank", "bank",
+    "banknifty", "sensex", "finnifty", "sensex50", "niftynext50",
+    "midcpnifty", "bankex", "index", "which", "niftybees",
     "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
     "ten", "zero", "twenty", "thirty", "forty", "fifty", "hundred",
 }
@@ -44,8 +46,24 @@ for canon, variants in SYNONYMS.items():
     for v in variants:
         _LOOKUP[v] = canon
 
-# Multi-word phrases collapsed before token matching.
+# Multi-word phrases collapsed before token matching. Order matters:
+# unsupported indices are collapsed to their own token FIRST, so that
+# "fin nifty" or "sensex fifty" can never be read as NIFTY or SENSEX.
 PHRASES = [
+    (r"\bnifty\s+next\s+(?:fifty|50)\b", "niftynext50"),
+    (r"\bfin\s*nifty\b", "finnifty"),
+    (r"\bmid\s*(?:cap|cp)\s*nifty\b", "midcpnifty"),
+    (r"\bsensex\s*(?:fifty|50)\b", "sensex50"),
+    (r"\bbank\s*ex\b", "bankex"),
+    # NIFTYBEES is an equity ETF, not the index - collapse it before
+    # "nifty" can be picked out on its own.
+    (r"\bnifty\s*bees?\b", "niftybees"),
+    # Supported indices, in the forms speech recognition produces.
+    (r"\bbank\s*nifty(?:'s)?\b", "banknifty"),
+    (r"\bnifty\s+(?:fifty|50)\b", "nifty"),
+    (r"\bsense\s*x\b", "sensex"),
+    (r"\bsensex'?s\b", "sensex"),
+    (r"\bcensus\b", "sensex"),
     (r"\bsquare\s+off\b", "exit"),
     (r"\bget\s+out\s+of\b", "exit"),
     (r"\bget\s+rid\s+of\b", "exit"),

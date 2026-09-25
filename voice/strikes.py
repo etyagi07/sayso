@@ -79,6 +79,16 @@ def candidates(span):
                 if len(tail) <= 3:
                     out.add(int(head) * 1000 + int(tail))
 
+    # Digits then a scale: "seven four thousand" is 74 thousand, not the
+    # 7 + 4 = 11 thousand a number parser makes of it. Same for "five five
+    # six hundred" (556 hundred). The ladder throws out anything absurd.
+    if len(span) >= 2 and span[-1] in numbers.SCALES:
+        head = span[:-1]
+        if all(w in numbers.ONES or w.isdigit() for w in head):
+            joined = "".join(w if w.isdigit() else str(numbers.ONES[w])
+                             for w in head)
+            out.add(int(joined) * numbers.SCALES[span[-1]])
+
     # Split into parts and recombine the way traders actually speak.
     for cut in range(1, len(span)):
         left, right = span[:cut], span[cut:]

@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 MODULES = [
     "shoonya.client", "shoonya.broker", "shoonya.instruments",
-    "shoonya.credentials",
+    "shoonya.credentials", "shoonya.underlyings",
     "voice.agent", "voice.parser", "voice.strikes", "voice.numbers",
     "voice.fuzzy", "voice.safety", "voice.config", "voice.listen",
     "voice.calibrate", "voice.doctor", "voice.cli", "voice.main",
@@ -30,7 +30,10 @@ PUBLIC = {
     "voice.parser": ["parse"],
     "voice.strikes": ["resolve", "read_order", "number_spans"],
     "voice.safety": ["check", "check_option", "record", "status"],
-    "voice.agent": ["handle", "_execute"],
+    "voice.agent": ["handle", "_execute", "friendly"],
+    "shoonya.instruments": ["contracts", "contract_for", "expiries", "find",
+                            "ladder", "atm_strike"],
+    "shoonya.underlyings": ["UNDERLYINGS", "UNSUPPORTED", "get", "band"],
     "voice.config": ["load", "save", "backend", "is_calibrated"],
 }
 

@@ -15,7 +15,34 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import shoonya.broker as b  # noqa: E402
+from datetime import date  # noqa: E402
+from shoonya import instruments as ins  # noqa: E402
 from voice import agent, safety  # noqa: E402
+
+# A tiny offline stand-in for the symbol masters. Note the SENSEX symbol:
+# BSE puts CE/PE at the end, so anything pattern-matching NIFTY's layout
+# would never recognise it.
+CONTRACTS = {
+    "NIFTY29SEP26C23100": ("NIFTY", "CE", 23100, "NFO", "73906"),
+    "NIFTY29SEP26C23150": ("NIFTY", "CE", 23150, "NFO", "73908"),
+    "NIFTY29SEP26P23100": ("NIFTY", "PE", 23100, "NFO", "73907"),
+    "BANKNIFTY29SEP26C55600": ("BANKNIFTY", "CE", 55600, "NFO", "69779"),
+    "SENSEX26O0173900CE": ("SENSEX", "CE", 73900, "BFO", "886639"),
+}
+
+
+def fake_contract_for(tsym):
+    if tsym not in CONTRACTS:
+        return None
+    u, ot, k, exch, tok = CONTRACTS[tsym]
+    return {"tsym": tsym, "underlying": u, "option_type": ot, "strike": k,
+            "exchange": exch, "token": tok, "lot": 65,
+            "expiry": date(2026, 9, 29)}
+
+
+def pos(tsym, qty, avg=100.0):
+    return {"symbol": tsym, "qty": qty, "avg_price": avg, "ltp": avg + 1,
+            "prd": "M"}
 
 YES = lambda p: True  # noqa: E731
 NO = lambda p: False  # noqa: E731
@@ -55,6 +82,9 @@ class Fake:
         for name, fn in defaults.items():
             self.saved[name] = getattr(b, name)
             setattr(b, name, fn)
+        self.saved["_contract_for"] = ins.contract_for
+        ins.contract_for = fake_contract_for
+        agent._pending = None
         return self
 
     def _place(self, side, tsym, quantity, price, exchange, product):
@@ -64,6 +94,8 @@ class Fake:
         return {"status": "ACCEPTED", "order_no": "ORD1", "tag": "t"}
 
     def __exit__(self, *exc):
+        ins.contract_for = self.saved.pop("_contract_for")
+        agent._pending = None
         path, counters = self.saved.pop("state")
         safety.STATE_FILE = path
         safety._spent_today.clear()
@@ -215,7 +247,7 @@ def test_exit_asks_when_two_positions_match():
              "ltp": 71.0, "prd": "M"}]
     with Fake(positions=lambda include_closed=False: held) as f:
         r = agent.handle("exit call", YES)
-        assert r.get("needs_clarification")
+        assert r.get("needs_answer") == "strike", r["speak"]
         assert not f.sent
 
 
@@ -225,6 +257,95 @@ def test_declining_sends_nothing():
         assert r["speak"] == "Cancelled."
         assert not f.sent
         assert orders_counted() == 0
+
+
+# --- indices ------------------------------------------------------------
+
+def test_exit_recognises_a_sensex_position():
+    # SENSEX symbols end in CE/PE. The old pattern-match only understood
+    # NIFTY's layout and would have said "no open call position".
+    held = [pos("SENSEX26O0173900CE", 20, 540.0)]
+    with Fake(positions=lambda include_closed=False: held) as f:
+        agent.handle("exit call", YES)
+        assert f.sent and f.sent[0]["tsym"] == "SENSEX26O0173900CE"
+        assert f.sent[0]["exchange"] == "BFO", f.sent[0]
+
+
+def test_exit_across_indices_asks_which_index():
+    held = [pos("NIFTY29SEP26C23100", 65), pos("SENSEX26O0173900CE", 20)]
+    with Fake(positions=lambda include_closed=False: held) as f:
+        r = agent.handle("exit call", YES)
+        assert r.get("needs_answer") == "underlying", r["speak"]
+        assert not f.sent
+        # Answering with just the index finishes the exit.
+        agent.handle("sensex", YES)
+        assert f.sent and f.sent[0]["tsym"] == "SENSEX26O0173900CE"
+
+
+def test_named_index_narrows_the_exit():
+    held = [pos("NIFTY29SEP26C23100", 65), pos("BANKNIFTY29SEP26C55600", 30)]
+    with Fake(positions=lambda include_closed=False: held) as f:
+        agent.handle("exit the bank nifty call", YES)
+        assert f.sent and f.sent[0]["tsym"] == "BANKNIFTY29SEP26C55600"
+
+
+def test_named_strike_narrows_the_exit():
+    held = [pos("NIFTY29SEP26C23100", 65), pos("NIFTY29SEP26C23150", 65)]
+    with Fake(positions=lambda include_closed=False: held) as f:
+        agent.handle("exit the 23150 call", YES)
+        assert f.sent and f.sent[0]["tsym"] == "NIFTY29SEP26C23150"
+
+
+def test_same_index_two_strikes_asks_which_strike():
+    held = [pos("NIFTY29SEP26C23100", 65), pos("NIFTY29SEP26C23150", 65)]
+    with Fake(positions=lambda include_closed=False: held) as f:
+        r = agent.handle("exit nifty call", YES)
+        assert r.get("needs_answer") == "strike", r["speak"]
+        agent.handle("twenty three one hundred", YES)
+        assert f.sent and f.sent[0]["tsym"] == "NIFTY29SEP26C23100"
+
+
+def test_no_index_named_asks_before_anything_else():
+    with Fake() as f:
+        r = agent.handle("buy call", YES)
+        assert r.get("needs_answer") == "underlying"
+        assert not f.sent
+
+
+def test_an_unrelated_command_drops_the_question():
+    # A pending order must not be completed later by accident.
+    with Fake() as f:
+        agent.handle("buy call", YES)
+        agent.handle("what are my limits", YES)
+        r = agent.handle("bank nifty", YES)
+        assert "wasn't waiting" in r["speak"]
+        assert not f.sent
+
+
+def test_pending_question_expires():
+    with Fake() as f:
+        agent.handle("buy call", YES)
+        agent._pending["expires"] = 0
+        r = agent.handle("sensex", YES)
+        assert "wasn't waiting" in r["speak"]
+        assert not f.sent
+
+
+def test_unsupported_index_is_never_read_as_a_supported_one():
+    # "fin nifty" contains "nifty" - it must not become a NIFTY order.
+    with Fake() as f:
+        for said in ("buy fin nifty call", "buy sensex fifty put",
+                     "buy nifty next fifty call"):
+            r = agent.handle(said, YES)
+            assert "aren't supported" in r["speak"], said
+        assert not f.sent
+
+
+def test_index_without_call_or_put_is_refused():
+    with Fake() as f:
+        r = agent.handle("buy bank nifty", YES)
+        assert "say call or put" in r["speak"]
+        assert not f.sent
 
 
 if __name__ == "__main__":

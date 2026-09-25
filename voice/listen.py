@@ -19,10 +19,11 @@ SAMPLE_RATE = 16000          # what Whisper expects
 
 R, G, DIM, X = "\033[91m", "\033[92m", "\033[2m", "\033[0m"
 
-PROMPT = ("Stock trading commands. Buy one YESBANK at twenty three "
-          "point two two. Sell two YESBANK at twenty three point two "
-          "zero. What is YESBANK at? "
-          "Tickers: YESBANK, RELIANCE, NIFTYBEES, SBIN, INFY.")
+PROMPT = ("Index options and stock orders. Buy Nifty call. Buy Bank Nifty "
+          "put fifty five six hundred. Buy Sensex call seventy four "
+          "thousand. Exit the Sensex put. What is the Bank Nifty call at? "
+          "Buy two lots of Nifty call twenty three one hundred. "
+          "Buy one YESBANK. Stocks: RELIANCE, INFY, SBIN.")
 
 _model = None
 

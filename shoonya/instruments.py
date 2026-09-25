@@ -15,15 +15,17 @@ import io
 import time
 import urllib.request
 import zipfile
-from datetime import datetime, date
+from datetime import datetime, time as dtime
 from pathlib import Path
+from zoneinfo import ZoneInfo
+
+from shoonya import underlyings
+
+IST = ZoneInfo("Asia/Kolkata")
+CLOSE = dtime(15, 30)
 
 MASTER_URL = "https://api.shoonya.com/{segment}_symbols.txt.zip"
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
-
-# Strike spacing near the money, per underlying. The master has finer
-# spacing far out; near spot Nifty runs in 50s.
-STRIKE_STEP = {"NIFTY": 50, "BANKNIFTY": 100, "FINNIFTY": 50, "MIDCPNIFTY": 25}
 
 _cache = {}
 
@@ -54,8 +56,8 @@ def download_master(segment="NFO", max_age_hours=12):
     return path
 
 
-def load(segment="NFO", symbol="NIFTY", instrument="OPTIDX"):
-    """All contracts for one underlying, parsed and cached in-process."""
+def load(segment="NFO", symbol="NIFTY", instrument="OPTIDX", underlying=None):
+    """All contracts for one master-file symbol, parsed and cached."""
     key = (segment, symbol, instrument)
     if key in _cache:
         return _cache[key]
@@ -75,9 +77,12 @@ def load(segment="NFO", symbol="NIFTY", instrument="OPTIDX"):
                     "lot": int(row["LotSize"]),
                     "tick": float(row["TickSize"]),
                     "strike": int(float(row["StrikePrice"] or 0)),
+                    # From the master's own column - never parsed out of the
+                    # trading symbol, whose layout differs by exchange.
                     "option_type": row.get("OptionType", "").strip(),
                     "expiry": datetime.strptime(row["Expiry"], "%d-%b-%Y").date(),
                     "exchange": row["Exchange"],
+                    "underlying": underlying or symbol,
                 })
             except (ValueError, KeyError):
                 continue
@@ -85,56 +90,85 @@ def load(segment="NFO", symbol="NIFTY", instrument="OPTIDX"):
     return out
 
 
-def expiries(symbol="NIFTY", on=None):
-    """Upcoming expiry dates, soonest first."""
-    on = on or date.today()
-    return sorted({c["expiry"] for c in load(symbol=symbol) if c["expiry"] >= on})
+def contracts(name):
+    """Option contracts for an underlying named in shoonya.underlyings."""
+    u = underlyings.get(name)
+    return load(segment=u.segment, symbol=u.master_symbol, underlying=u.name)
 
 
-def atm_strike(spot, symbol="NIFTY"):
-    """Nearest tradeable strike to spot."""
-    step = STRIKE_STEP.get(symbol, 50)
+def _now_ist():
+    return datetime.now(IST)
+
+
+def expiries(name="NIFTY", now=None):
+    """Upcoming expiry dates, soonest first.
+
+    On expiry day the expiring contract stays first until the close, then
+    drops off - trading it after 15:30 would target a contract that has
+    already expired.
+    """
+    now = now or _now_ist()
+    today = now.date()
+    after_close = now.time() >= CLOSE
+    return sorted({c["expiry"] for c in contracts(name)
+                   if c["expiry"] > today
+                   or (c["expiry"] == today and not after_close)})
+
+
+def atm_strike(spot, name="NIFTY"):
+    """Nearest strike to spot on this underlying's spacing."""
+    step = underlyings.get(name).step
     return int(round(spot / step) * step)
 
 
-def find(symbol="NIFTY", option_type="CE", strike=None, expiry=None, spot=None):
+def ladder(name, expiry):
+    """The strikes actually listed for one expiry."""
+    return {c["strike"] for c in contracts(name) if c["expiry"] == expiry}
+
+
+def find(name="NIFTY", option_type="CE", strike=None, expiry=None, spot=None):
     """Resolve one option contract.
 
-    option_type: 'CE' (call) or 'PE' (put).
-    strike: explicit, or derived from `spot` if omitted.
-    expiry: explicit date, or the nearest upcoming one.
-
-    Returns the contract dict, or None with no match.
+    option_type: 'CE' or 'PE'. strike: explicit, or at-the-money from
+    `spot`. expiry: explicit, or the nearest tradeable one.
+    Returns the contract dict, or None.
     """
-    contracts = load(symbol=symbol)
-    if not contracts:
+    rows = contracts(name)
+    if not rows:
         return None
-
     if expiry is None:
-        upcoming = expiries(symbol)
+        upcoming = expiries(name)
         if not upcoming:
             return None
         expiry = upcoming[0]
-
     if strike is None:
         if spot is None:
             return None
-        strike = atm_strike(spot, symbol)
+        strike = atm_strike(spot, name)
 
-    matches = [c for c in contracts
-               if c["expiry"] == expiry
-               and c["option_type"] == option_type
-               and c["strike"] == strike]
-    if matches:
-        return matches[0]
-
-    # Requested strike is not listed - fall back to the closest that is,
-    # rather than failing or inventing a symbol.
-    same = [c for c in contracts
+    same = [c for c in rows
             if c["expiry"] == expiry and c["option_type"] == option_type]
+    exact = [c for c in same if c["strike"] == strike]
+    if exact:
+        return dict(exact[0])
     if not same:
         return None
-    nearest = min(same, key=lambda c: abs(c["strike"] - strike))
-    nearest = dict(nearest)
+    # Requested strike is not listed - use the closest that is, and say so,
+    # rather than inventing a symbol.
+    nearest = dict(min(same, key=lambda c: abs(c["strike"] - strike)))
     nearest["strike_adjusted_from"] = strike
     return nearest
+
+
+def contract_for(tsym):
+    """Look a held position's symbol up in the masters.
+
+    Replaces pattern-matching the symbol for call/put and token, which only
+    ever worked for NIFTY's layout - it would never have recognised a
+    SENSEX position.
+    """
+    for name in underlyings.UNDERLYINGS:
+        for c in contracts(name):
+            if c["tsym"] == tsym:
+                return c
+    return None

@@ -1,7 +1,7 @@
 """Hard limits enforced in code, regardless of what was said or parsed.
 
 This layer exists because every other layer can be wrong: ASR mishears,
-the parser misreads, the LLM hallucinates. These checks are the last thing
+the parser misreads, a number is misheard. These checks are the last thing
 between a misunderstanding and a trade, so they are deliberately dumb,
 explicit, and fail-closed.
 """
@@ -29,21 +29,24 @@ class Limits:
     max_value_per_day: float = 500.0
 
     # --- options -------------------------------------------------------
-    # One Nifty lot is 65 units, so an ATM premium near 125 costs ~8,100.
-    # These cap the damage from a misheard command; they are NOT a view on
+    # Lot caps per index. With no premium or order-value cap, these are the
+    # only automatic limit on size - what stops a misheard "twenty" for
+    # "two" becoming a real position. BANKNIFTY is tighter because it has
+    # no weekly contract, so its monthly lots are the most expensive.
+    # They cap the damage from a misheard command; they are NOT a view on
     # what is a sensible trade.
-    option_allowlist: set = field(default_factory=lambda: {"NIFTY"})
-    # 10 lots is the ceiling. There is no per-order value cap, so this is
-    # what stops a misheard number becoming a huge position - "two" and
-    # "twenty two" are one slip apart in speech.
-    max_lots: int = 10
-    max_premium_per_unit: float = 200.0
-    # No per-order value cap: the client sizes his own trades. What is
-    # left between a misheard number and a filled position is the
-    # confirmation screen - which is why it spells out lots, units and
-    # total rather than just a price.
+    max_lots: dict = field(default_factory=lambda: {
+        "NIFTY": 10, "BANKNIFTY": 3, "SENSEX": 10})
+    # No premium-per-unit cap: it blocked every BANKNIFTY at-the-money
+    # trade. No per-order value cap either - the client sizes his own
+    # trades, and the confirmation screen spells out lots, units and total.
+    max_premium_per_unit: float = None
     max_option_order_value: float = None
     max_option_orders_per_day: int = 10
+
+    @property
+    def option_allowlist(self):
+        return set(self.max_lots)
 
 
 LIMITS = Limits()
@@ -141,21 +144,24 @@ def check(symbol, quantity, price, price_type, limits=LIMITS):
 
 def check_option(tsym, underlying, lots, lot_size, price, limits=LIMITS):
     """Limits for an option order. Returns (total_value, units)."""
-    if limits.option_allowlist and underlying.upper() not in limits.option_allowlist:
+    underlying = underlying.upper()
+    if underlying not in limits.option_allowlist:
         raise Rejected(
-            f"{underlying} options are not on the allowlist. Only "
-            f"{', '.join(sorted(limits.option_allowlist))} is permitted."
+            f"{underlying} options are not enabled. Only "
+            f"{', '.join(sorted(limits.option_allowlist))} can be traded."
         )
     if lots <= 0:
         raise Rejected(f"{lots} lots is not a valid order size.")
-    if limits.max_lots is not None and lots > limits.max_lots:
+    cap = limits.max_lots.get(underlying)
+    if cap is not None and lots > cap:
         raise Rejected(
-            f"{lots} lots exceeds the cap of {limits.max_lots} lot"
-            f"{'s' if limits.max_lots != 1 else ''} per order."
+            f"{lots} lots exceeds the {underlying} cap of {cap} lot"
+            f"{'s' if cap != 1 else ''} per order."
         )
     if price is None:
         raise Rejected("No price available to value this option against.")
-    if price > limits.max_premium_per_unit:
+    if (limits.max_premium_per_unit is not None
+            and price > limits.max_premium_per_unit):
         raise Rejected(
             f"Premium {price:.2f} is above the {limits.max_premium_per_unit:.0f} "
             f"per-unit limit - that contract is too expensive to trade here."
@@ -205,7 +211,7 @@ def status():
         "option_orders_remaining": (LIMITS.max_option_orders_per_day
                                     - op["orders"]),
         "option_allowlist": sorted(LIMITS.option_allowlist),
-        "max_lots": LIMITS.max_lots,   # None = no cap
+        "max_lots": dict(LIMITS.max_lots),
         "max_premium_per_unit": LIMITS.max_premium_per_unit,
         "max_option_order_value": LIMITS.max_option_order_value,
     }

@@ -244,40 +244,44 @@ def quote_checked(exchange, token, expect_tsym=None, tries=4):
     return None
 
 
-def option_contract(option_type, symbol="NIFTY", strike=None, expiry=None):
-    """Resolve the ATM (or given) option and attach a live quote.
+def option_contract(name, option_type, strike=None, expiry=None):
+    """Resolve an index option and attach a live, identity-checked quote.
 
-    option_type: 'CE' or 'PE'. Strike defaults to at-the-money, derived from
-    spot; expiry defaults to the nearest upcoming one.
+    name: an index from shoonya.underlyings (NIFTY, BANKNIFTY, SENSEX).
+    option_type: 'CE' or 'PE'. Strike defaults to at-the-money, from the
+    index's own spot; expiry defaults to the nearest tradeable one.
     """
     from shoonya import instruments as ins
+    from shoonya import underlyings
 
+    u = underlyings.get(name)
     spot = None
     if strike is None:
-        # Spot from the index itself; NSE works even when NFO search does not.
-        idx = quote_checked("NSE", "26000")
+        idx = quote_checked(*u.spot)
         if not idx:
-            return {"error": "Could not read Nifty spot"}
+            return {"error": f"Could not read the {u.spoken} level"}
         spot = float(idx["lp"])
 
-    c = ins.find(symbol=symbol, option_type=option_type,
-                 strike=strike, expiry=expiry, spot=spot)
+    c = ins.find(name, option_type, strike=strike, expiry=expiry, spot=spot)
     if not c:
-        return {"error": f"No {symbol} {option_type} contract found"}
+        return {"error": f"No {u.spoken} {option_type} contract found"}
 
-    q = quote_checked("NFO", c["token"], expect_tsym=c["tsym"])
+    q = quote_checked(u.segment, c["token"], expect_tsym=c["tsym"])
     if not q:
         return {"error": f"No trustworthy quote for {c['tsym']} - either the "
-                         f"F&O segment is disabled, or the feed kept returning "
-                         f"a different instrument.",
+                         f"{u.segment} segment is disabled, or the feed kept "
+                         f"returning a different instrument.",
                 "contract": c}
 
+    today = ins._now_ist().date()
     return {
-        "tsym": c["tsym"], "token": c["token"], "exchange": "NFO",
+        "tsym": c["tsym"], "token": c["token"], "exchange": u.segment,
+        "underlying": name, "spoken_name": u.spoken, "cadence": u.cadence,
         "lot": c["lot"], "tick": c["tick"], "strike": c["strike"],
-        "expiry": str(c["expiry"]), "option_type": option_type,
+        "expiry": str(c["expiry"]), "expires_today": c["expiry"] == today,
+        "option_type": option_type,
         "ltp": _f(q.get("lp")), "bid": _f(q.get("bp1")), "ask": _f(q.get("sp1")),
-        "spot": _f(q.get("sptprc")), "oi": q.get("oi"),
+        "spot": _f(q.get("sptprc")) or spot, "oi": q.get("oi"),
         "lower_circuit": _f(q.get("lc")), "upper_circuit": _f(q.get("uc")),
         "strike_adjusted_from": c.get("strike_adjusted_from"),
     }

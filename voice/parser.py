@@ -27,6 +27,15 @@ EXIT_WORDS = r"exit|close|square off|squareoff|square|unwind|get out of"
 OPTION_WORDS = {"call": "CE", "calls": "CE", "ce": "CE",
                 "put": "PE", "puts": "PE", "pe": "PE"}
 
+# Index tokens, as produced by voice.fuzzy.normalise.
+INDEX_WORDS = {"nifty": "NIFTY", "banknifty": "BANKNIFTY", "sensex": "SENSEX"}
+UNSUPPORTED_WORDS = {"finnifty": "FINNIFTY", "sensex50": "SENSEX50",
+                     "niftynext50": "NIFTYNXT50", "midcpnifty": "MIDCPNIFTY",
+                     "bankex": "BANKEX"}
+# Words that can pad a one-word answer: "bank nifty please", "the sensex one".
+ANSWER_FILLER = {"the", "a", "one", "please", "index", "it", "is", "its",
+                 "ok", "okay", "yes", "that", "for"}
+
 
 def _number(text):
     if text is None:
@@ -52,6 +61,19 @@ def parse(transcript):
     t = " ".join(t.split())
     if not re.search(r"[a-z0-9]", t):
         return {"intent": "unknown", "transcript": transcript}
+
+    # --- one-word answers to a question the agent asked --------------------
+    tokens = [w for w in t.split() if w not in ANSWER_FILLER]
+    if len(tokens) == 1 and tokens[0] in INDEX_WORDS:
+        return {"intent": "index_answer", "underlying": INDEX_WORDS[tokens[0]]}
+    # "one" is both padding ("the nifty one") and a digit ("two three one
+    # zero zero"), so number answers keep every word that reads as a number.
+    tokens = [w for w in t.split()
+              if w not in ANSWER_FILLER or strikes._is_numeric(w)]
+    if tokens and all(strikes._is_numeric(w) for w in tokens):
+        return {"intent": "number_answer",
+                "number_spans": [span for _, _, span
+                                 in strikes.number_spans(tokens)]}
     # Strip conversational filler so it cannot end up inside a symbol name
     # ("dump my yesbank" was resolving the name as "my yesbank").
     t = re.sub(r"\b(?:me|my|some|please|shares?|stocks?)\b", " ", t)
@@ -69,27 +91,44 @@ def parse(transcript):
 
     # --- options: "buy call", "exit put" ---------------------------------
     words_all = t.split()
+    unsupported = next((UNSUPPORTED_WORDS[w] for w in words_all
+                        if w in UNSUPPORTED_WORDS), None)
+    if unsupported:
+        return {"intent": "index_unsupported", "index": unsupported}
+    underlying = next((INDEX_WORDS[w] for w in words_all
+                       if w in INDEX_WORDS), None)
+    # Numbers anywhere in the command; strike and quantity are told apart
+    # later, against the live strike ladder.
+    spans = [span for _, _, span in strikes.number_spans(words_all)]
+
     opt = next((OPTION_WORDS[w] for w in words_all if w in OPTION_WORDS), None)
+    if underlying and not opt and re.search(
+            rf"\b({BUY_WORDS}|{SELL_WORDS}|{EXIT_WORDS})\b", t):
+        # "buy bank nifty" - an index is not something you can buy.
+        return {"intent": "index_needs_type", "underlying": underlying}
     if opt:
         is_exit = bool(re.search(rf"\b({EXIT_WORDS})\b", t))
         is_buy = bool(re.search(rf"\b({BUY_WORDS})\b", t))
         is_sell = bool(re.search(r"\b(sell|short|write)\b", t))
         if is_exit:
-            return {"intent": "option_exit", "option_type": opt}
+            return {"intent": "option_exit", "option_type": opt,
+                    "underlying": underlying, "number_spans": spans}
         if is_buy:
             # Hand every number in the utterance to the caller. Telling a
             # strike from a quantity needs the live strike ladder, which
             # lives where market data does - not in the parser.
-            spans = [span for _, _, span in strikes.number_spans(words_all)]
             return {"intent": "option_buy", "option_type": opt,
-                    "lots": None, "number_spans": spans}
+                    "underlying": underlying, "lots": None,
+                    "number_spans": spans}
         if is_sell:
             # Selling to open is unlimited-risk and sounds too much like
             # "exit". Refuse rather than guess which was meant.
             return {"intent": "option_refused", "option_type": opt,
+                    "underlying": underlying,
                     "reason": "Selling options to open is not supported. "
                               "Say 'exit call' or 'exit put' to close a position."}
-        return {"intent": "option_quote", "option_type": opt}
+        return {"intent": "option_quote", "option_type": opt,
+                "underlying": underlying, "number_spans": spans}
 
     # "what is yesbank at" / "price of yesbank" / "yesbank quote"
     m = re.search(r"(?:price of|quote for|quote|what'?s|what is|how much is)\s+([a-z0-9 ]+?)"
