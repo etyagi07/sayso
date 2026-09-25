@@ -18,15 +18,21 @@ STATE_FILE = Path(__file__).resolve().parent.parent / ".daily_limits.json"
 
 @dataclass
 class Limits:
-    # Equity testing posture: YESBANK only, tiny size.
-    allowlist: set = field(default_factory=lambda: {"YESBANK"})
-    max_order_value: float = 100.0
-    max_quantity: int = 50
+    # Equity: any stock in voice.stocks (the Nifty 50 plus your additions).
+    # Small caps - the client trades index options, not stocks. Big enough
+    # for one share of any Nifty 50 name; some trade above Rs 10,000.
+    max_order_value: float = 15000.0
+    max_quantity: int = 1000
     # Shoonya has no MKT order type; "at market" is a limit priced through
     # the touch. This flag is kept only to name that explicitly.
     allow_marketable_limits: bool = True
     max_orders_per_day: int = 20
-    max_value_per_day: float = 500.0
+    max_value_per_day: float = 50000.0
+
+    @property
+    def allowlist(self):
+        from voice import stocks
+        return stocks.symbols()
 
     # --- options -------------------------------------------------------
     # Lot caps per index. With no premium or order-value cap, these are the
@@ -97,12 +103,14 @@ def _today_counters(segment="equity"):
 
 def check(symbol, quantity, price, price_type, limits=LIMITS):
     """Raise Rejected if this order breaches any limit. Returns the value."""
-    base = symbol.split("-")[0].upper()
+    # Strip the series suffix, not everything after the first hyphen - that
+    # turned BAJAJ-AUTO-EQ into BAJAJ.
+    base = symbol.upper().removesuffix("-EQ")
 
-    if limits.allowlist and base not in limits.allowlist:
+    if base not in limits.allowlist:
         raise Rejected(
-            f"{base} is not on the allowlist. Only "
-            f"{', '.join(sorted(limits.allowlist))} can be traded right now."
+            f"{base} isn't in the stock list. Add it with: python -m "
+            f"voice.stocks add \"name\" {base}"
         )
 
     if price_type == "MKT":
@@ -200,7 +208,7 @@ def record(value, segment="equity"):
 def status():
     eq, op = _today_counters("equity"), _today_counters("options")
     return {
-        "allowlist": sorted(LIMITS.allowlist),
+        "stocks": len(LIMITS.allowlist),
         "max_order_value": LIMITS.max_order_value,
         "marketable_limits": LIMITS.allow_marketable_limits,
         "orders_today": eq["orders"],

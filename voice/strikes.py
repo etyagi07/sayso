@@ -40,7 +40,10 @@ def number_spans(tokens):
             j -= 1
         if run:
             spans.append((i, j, run))
-        i = j
+        # Always move forward. A run that was only "and" trims back to where
+        # it started, and without this the loop never ends - which froze the
+        # app on "L and T", "M and M" or "buy call and put".
+        i = max(j, i + 1)
     return spans
 
 

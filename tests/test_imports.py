@@ -43,6 +43,27 @@ def test_modules_import():
         importlib.import_module(name)
 
 
+def test_sdk_calls_have_a_timeout():
+    # Regression: none of the SDK's network calls set a timeout, so one
+    # stalled connection froze a live session.
+    import NorenRestApiPy.NorenApi as sdk
+    import shoonya.client  # noqa: F401 - installs the timeout
+    seen = {}
+    real = sdk.requests.__class__.__getattr__
+    import requests
+    original = requests.post
+    requests.post = lambda *a, **k: seen.update(k) or (_ for _ in ()).throw(
+        requests.ConnectionError("stop"))
+    try:
+        try:
+            sdk.requests.post("http://example.invalid", data="x")
+        except requests.ConnectionError:
+            pass
+    finally:
+        requests.post = original
+    assert seen.get("timeout"), "SDK request sent without a timeout"
+
+
 def test_public_names_exist():
     for module, names in PUBLIC.items():
         mod = importlib.import_module(module)

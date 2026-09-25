@@ -36,7 +36,8 @@ PROTECTED = {
     "position", "positions", "own", "have", "point", "lot", "lots", "and",
     "balance", "money", "orders", "order", "nifty", "yesbank", "bank",
     "banknifty", "sensex", "finnifty", "sensex50", "niftynext50",
-    "midcpnifty", "bankex", "index", "which", "niftybees",
+    "midcpnifty", "bankex", "index", "which", "niftybees", "longterm",
+    "intraday", "delivery",
     "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
     "ten", "zero", "twenty", "thirty", "forty", "fifty", "hundred",
 }
@@ -50,6 +51,9 @@ for canon, variants in SYNONYMS.items():
 # unsupported indices are collapsed to their own token FIRST, so that
 # "fin nifty" or "sensex fifty" can never be read as NIFTY or SENSEX.
 PHRASES = [
+    # "long term" is holding period, not "go long" - collapse it before
+    # "long" can be read as buy.
+    (r"\blong\s*term\b", "longterm"),
     (r"\bnifty\s+next\s+(?:fifty|50)\b", "niftynext50"),
     (r"\bfin\s*nifty\b", "finnifty"),
     (r"\bmid\s*(?:cap|cp)\s*nifty\b", "midcpnifty"),

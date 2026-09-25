@@ -6,9 +6,38 @@ import webbrowser
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
+import requests
+import NorenRestApiPy.NorenApi as _sdk
 from NorenRestApiPy.NorenApi import NorenApi
 
 HOST = "https://api.shoonya.com/NorenWClientAPI/"
+
+# (connect, read) seconds, for every call to the broker.
+TIMEOUT = (5, 15)
+
+
+class _TimedRequests:
+    """`requests`, as the SDK sees it, but with a timeout on every call.
+
+    None of the SDK's thirty network calls sets one, so a stalled
+    connection hangs quotes, logins and account reads indefinitely - it
+    froze a live session during testing. Swapping the module the SDK
+    calls through covers every call without editing the SDK.
+    """
+
+    def __getattr__(self, name):
+        return getattr(requests, name)
+
+    def post(self, *args, **kwargs):
+        kwargs.setdefault("timeout", TIMEOUT)
+        return requests.post(*args, **kwargs)
+
+    def get(self, *args, **kwargs):
+        kwargs.setdefault("timeout", TIMEOUT)
+        return requests.get(*args, **kwargs)
+
+
+_sdk.requests = _TimedRequests()
 WS = "wss://api.shoonya.com/NorenWSAPI/"
 AUTHORIZE_URL = "https://api.shoonya.com/OAuthlogin/authorize/oauth"
 

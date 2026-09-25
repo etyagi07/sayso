@@ -21,11 +21,7 @@ import uuid
 
 import requests
 
-from shoonya.client import HOST, connect
-
-# (connect, read) seconds. Without a timeout a stalled connection hangs the
-# whole app - including in the middle of placing an order.
-TIMEOUT = (5, 15)
+from shoonya.client import HOST, TIMEOUT, connect
 
 # Order states that will not change any more.
 FINAL = {"COMPLETE", "REJECTED", "CANCELED"}
@@ -233,7 +229,10 @@ def quote_checked(exchange, token, expect_tsym=None, tries=4):
     must be identity-checked, not just status-checked.
     """
     for _ in range(tries):
-        q = api().get_quotes(exchange=exchange, token=str(token))
+        try:
+            q = api().get_quotes(exchange=exchange, token=str(token))
+        except (requests.RequestException, ValueError):
+            continue            # timed out or garbled - try again
         if not q or q.get("stat") != "Ok":
             continue
         if str(q.get("token", "")) == str(token):

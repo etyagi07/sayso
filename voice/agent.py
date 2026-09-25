@@ -10,7 +10,7 @@ import time
 import shoonya.broker as b
 from shoonya import instruments as ins
 from shoonya import underlyings
-from voice import safety, strikes
+from voice import numbers, safety, stocks, strikes
 from voice.parser import parse
 
 # A question the agent asked ("which index?"), and the order waiting on the
@@ -56,7 +56,19 @@ def _handle(transcript, confirm):
     elif pending and intent["intent"] == "number_answer" \
             and pending["missing"] == "strike":
         intent = {**pending["intent"], "number_spans": intent["number_spans"]}
-    elif intent["intent"] in ("index_answer", "number_answer"):
+    elif pending and intent["intent"] == "number_answer" \
+            and pending["missing"] == "quantity":
+        spans = intent["number_spans"]
+        qty, used = numbers.parse(spans[0]) if len(spans) == 1 else (None, 0)
+        if qty is None or used != len(spans[0]) or not float(qty).is_integer():
+            return {"speak": "I didn't catch a quantity. Say the whole order "
+                             "again.", "blocked": True}
+        intent = {**pending["intent"], "quantity": int(qty)}
+    elif pending and intent["intent"] == "product_answer" \
+            and pending["missing"] == "product":
+        intent = {**pending["intent"], "product": intent["product"]}
+    elif intent["intent"] in ("index_answer", "number_answer",
+                              "product_answer"):
         return {"speak": "I wasn't waiting for an answer. Say the whole "
                          "command.", "blocked": True}
 
@@ -113,14 +125,19 @@ def _handle(transcript, confirm):
                          for n, c in s["max_lots"].items())
         return {"speak": (f"Options: {caps} per order. "
                           f"{s['option_orders_remaining']} option orders "
-                          f"left today. Equity: "
-                          f"{', '.join(s['allowlist'])}, "
+                          f"left today. Equity: {s['stocks']} stocks, up to "
                           f"{s['max_order_value']:,.0f} rupees per order."),
                 "data": s}
     if kind == "quote":
-        q = b.quote(intent["name"])
-        if "error" in q:
-            return {"speak": q["error"], "data": q}
+        stock, problem = _stock(intent["name"])
+        if problem:
+            return problem
+        q = b.quote_checked("NSE", stock["token"], expect_tsym=stock["tsym"])
+        if not q:
+            return {"speak": f"I couldn't get a reliable price for "
+                             f"{stock['company']}.", "blocked": True}
+        q = {"symbol": stock["tsym"], "ltp": b._f(q.get("lp")),
+             "prev_close": b._f(q.get("c")), "change_pct": b._f(q.get("pc"))}
         # change_pct is absent for some instruments - compute from prev close.
         pct = q.get("change_pct")
         if pct is None and q.get("prev_close"):
@@ -135,81 +152,102 @@ def _handle(transcript, confirm):
     if kind != "order":
         return {"speak": "I'm not sure what to do with that.", "intent": intent}
 
-    # --- order path ------------------------------------------------------
-    sym = b.resolve_symbol(intent["name"])
-    if not sym:
-        return {"speak": f"I couldn't find anything called {intent['name']}."}
-    if "error" in sym:
-        suggestions = sym.get("did_you_mean") or []
-        extra = f" Did you mean {suggestions[0]}?" if suggestions else ""
-        return {"speak": sym["error"] + extra, "data": sym}
-    if sym.get("alternatives"):
-        # Never guess between instruments - this is the IDEAFORGE trap.
-        return {"speak": f"{intent['name']} is ambiguous. It could be "
-                         f"{sym['tsym']} or {', '.join(sym['alternatives'][:2])}. "
-                         f"Please say the exact name.",
-                "data": sym, "needs_disambiguation": True}
+    # --- equity order -----------------------------------------------------
+    return _equity_order(intent, confirm)
 
-    q = b.quote_checked("NSE", sym["token"], expect_tsym=sym["tsym"])
+
+PRODUCT_NAMES = {"I": "intraday", "C": "delivery", "M": "margin"}
+
+
+def _stock(name):
+    """A spoken company name -> one stock, or something to say instead."""
+    found = stocks.resolve(name or "")
+    if found is None:
+        return None, {"speak": f"I don't know {name}. Add it with: python -m "
+                               f"voice.stocks add \"{name}\" SYMBOL",
+                      "blocked": True}
+    if "ambiguous" in found:
+        options = [company for _, company in found["ambiguous"]]
+        listed = ", ".join(options[:-1]) + " or " + options[-1]
+        return None, {"speak": f"{name.title()} could be {listed}. Say the "
+                               f"full name.", "blocked": True,
+                      "needs_clarification": True}
+    return found, None
+
+
+def _equity_order(intent, confirm):
+    stock, problem = _stock(intent.get("name"))
+    if problem:
+        return problem
+    tsym, company = stock["tsym"], stock["company"]
+
+    q = b.quote_checked("NSE", stock["token"], expect_tsym=tsym)
     if not q:
-        return {"speak": f"I couldn't get a reliable price for "
-                         f"{sym['tsym']}.", "blocked": True}
+        return {"speak": f"I couldn't get a reliable price for {company}.",
+                "blocked": True}
     ltp = b._f(q.get("lp"))
     side_word = "buy" if intent["side"] == "B" else "sell"
     opening = intent["side"] == "B"
-    product = "C"
-
     quantity = intent["quantity"]
+
     if not opening:
         # A sell closes something you hold. Selling more than that would
         # be opening a short - refused, as selling options to open is.
         position = next((p for p in b.positions()
-                         if p["symbol"] == sym["tsym"] and p["qty"] > 0), None)
+                         if p["symbol"] == tsym and p["qty"] > 0), None)
         if position is None:
-            return {"speak": f"You don't hold any {sym['tsym']} to sell."}
+            return {"speak": f"You don't hold any {company} to sell."}
         held = position["qty"]
         if quantity is None:
             quantity = held
         elif quantity > held:
-            return {"speak": f"You hold {held} {sym['tsym']}. I won't sell "
-                             f"more than you hold.", "blocked": True}
-        product = position.get("prd") or product
-    elif quantity is None:
-        return {"speak": f"How many {sym['tsym']} do you want to {side_word}?",
-                "needs_quantity": True, "data": sym}
+            return {"speak": f"You hold {held} {company}. I won't sell more "
+                             f"than you hold.", "blocked": True}
+        # An exit has to use the product the position was opened with.
+        product = position.get("prd") or "C"
+    else:
+        if quantity is None:
+            _set_pending(intent, "quantity")
+            return {"speak": f"How many {company} shares?", "blocked": True,
+                    "needs_answer": "quantity"}
+        product = intent.get("product")
+        if product is None:
+            _set_pending(intent, "product")
+            return {"speak": "Intraday or delivery?", "blocked": True,
+                    "needs_answer": "product"}
 
     # Everything goes at market: a limit priced through the touch so it
     # fills now. A price said out loud is shown on the confirmation screen
     # rather than executed - numbers are the least reliable thing in speech.
-    spoken_price = intent["price"]
-    price = b.marketable_price(intent["side"], b.quote_view(q))
+    spoken_price = intent.get("price")
+    view = b.quote_view(q)
+    price = b.marketable_price(intent["side"], view)
     if price is None:
-        return {"speak": f"No usable price for {sym['tsym']}.", "blocked": True}
+        return {"speak": f"No usable price for {company}.", "blocked": True}
 
     value = round(quantity * price, 2)
     if opening:
         # Limits apply to opening a position. Closing one is never blocked -
         # a cap that stops you exiting traps you in the trade.
         try:
-            value = safety.check(sym["tsym"], quantity, price, "LMT")
+            value = safety.check(tsym, quantity, price, "LMT")
         except safety.Rejected as e:
             return {"speak": str(e), "blocked": True}
 
+    kind = PRODUCT_NAMES.get(product, product)
     preview = {
-        "action": side_word.upper(), "symbol": sym["tsym"], "quantity": quantity,
+        "action": f"{side_word.upper()} ({kind})", "symbol": tsym,
+        "company": company, "quantity": quantity, "product": kind,
         "price": price, "value": value, "ltp": ltp, "at_market": True,
         "spoken_price": spoken_price,
-        "say": (f"{side_word.capitalize()} {quantity} "
-                f"{sym['tsym'].replace('-EQ', '')}, about {value:,.0f} "
-                f"rupees."),
-        "bid": b._f(q.get("bp1")), "ask": b._f(q.get("sp1")),
-        "tick": b._f(q.get("ti")) or 0.05,
-        "lower_circuit": b._f(q.get("lc")), "upper_circuit": b._f(q.get("uc")),
-        "spoken": (f"{side_word} {quantity} {sym['tsym'].replace('-EQ','')} "
-                   f"at market, about {price:.2f}, "
-                   f"total {value:.2f} rupees."),
+        "say": (f"{side_word.capitalize()} {quantity} {company}, {kind}, "
+                f"about {value:,.0f} rupees."),
+        "bid": view["bid"], "ask": view["ask"], "tick": view["tick"],
+        "lower_circuit": view["lower_circuit"],
+        "upper_circuit": view["upper_circuit"],
+        "spoken": (f"{side_word} {quantity} {company} ({kind}) at market, "
+                   f"about {price:.2f}, total {value:,.2f} rupees."),
     }
-
     if confirm is None or not confirm(preview):
         return {"speak": "Cancelled.", "preview": preview, "confirmed": False}
 
@@ -218,14 +256,13 @@ def _handle(transcript, confirm):
     value = round(quantity * price, 2)
     if opening:
         try:
-            value = safety.check(sym["tsym"], quantity, price, "LMT")
+            value = safety.check(tsym, quantity, price, "LMT")
         except safety.Rejected as e:
             return {"speak": str(e), "blocked": True}
 
-    name = sym["tsym"].replace("-EQ", "")
-    return _execute(intent["side"], sym["tsym"], quantity, price,
-                    exchange="NSE", product=product,
-                    did=f"{'bought' if opening else 'sold'} {quantity} {name}",
+    return _execute(intent["side"], tsym, quantity, price, exchange="NSE",
+                    product=product,
+                    did=f"{'bought' if opening else 'sold'} {quantity} {company}",
                     value=value, opening=opening, segment="equity")
 
 

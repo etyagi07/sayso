@@ -32,6 +32,11 @@ INDEX_WORDS = {"nifty": "NIFTY", "banknifty": "BANKNIFTY", "sensex": "SENSEX"}
 UNSUPPORTED_WORDS = {"finnifty": "FINNIFTY", "sensex50": "SENSEX50",
                      "niftynext50": "NIFTYNXT50", "midcpnifty": "MIDCPNIFTY",
                      "bankex": "BANKEX"}
+# Intraday or delivery, however it is said.
+PRODUCT_WORDS = {"intraday": "I", "intra": "I", "mis": "I",
+                 "delivery": "C", "cnc": "C", "carry": "C", "positional": "C",
+                 "longterm": "C"}
+
 # Words that can pad a one-word answer: "bank nifty please", "the sensex one".
 ANSWER_FILLER = {"the", "a", "one", "please", "index", "it", "is", "its",
                  "ok", "okay", "yes", "that", "for"}
@@ -155,6 +160,8 @@ def _parse_one(transcript):
     tokens = [w for w in t.split() if w not in ANSWER_FILLER]
     if len(tokens) == 1 and tokens[0] in INDEX_WORDS:
         return {"intent": "index_answer", "underlying": INDEX_WORDS[tokens[0]]}
+    if len(tokens) == 1 and tokens[0] in PRODUCT_WORDS:
+        return {"intent": "product_answer", "product": PRODUCT_WORDS[tokens[0]]}
     # "one" is both padding ("the nifty one") and a digit ("two three one
     # zero zero"), so number answers keep every word that reads as a number.
     tokens = [w for w in t.split()
@@ -231,6 +238,21 @@ def _parse_one(transcript):
     elif re.search(rf"\b({SELL_WORDS})\b", t):
         side = "S"
 
+    # Intraday or delivery said as part of the order. Phrases first, so no
+    # stray "for the" is left behind to be read as part of a company name.
+    product = None
+    if re.search(r"\b(?:for the day|for today|same day)\b", t):
+        product = "I"
+        t = re.sub(r"\b(?:for the day|for today|same day)\b", " ", t)
+    if re.search(r"\b(?:to hold|to keep)\b", t):
+        product = "C"
+        t = re.sub(r"\b(?:to hold|to keep)\b", " ", t)
+    t_words = t.split()
+    for w in list(t_words):
+        if w in PRODUCT_WORDS:
+            product = PRODUCT_WORDS[w]
+    t = " ".join(w for w in t_words if w not in PRODUCT_WORDS)
+
     if side:
         # Token scan rather than one big regex: find the verb, pull out an
         # "at <price>" tail, take a leading number as quantity, and treat
@@ -261,6 +283,7 @@ def _parse_one(transcript):
         name = " ".join(rest).strip()
         if name:
             return {"intent": "order", "side": side, "quantity": qty,
-                    "name": canonical(name), "price": price}
+                    "name": canonical(name), "price": price,
+                    "product": product}
 
     return {"intent": "unknown", "transcript": transcript}

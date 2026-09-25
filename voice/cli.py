@@ -39,6 +39,8 @@ def _draw(preview):
         depth = f"   (bid {preview['bid']:.2f} / ask {preview['ask']:.2f})"
     print(f"\n{Y}┌─ CONFIRM ─────────────────────────────────{X}")
     print(f"{Y}│{X}  {preview['action']}  {preview['quantity']} x {preview['symbol']}")
+    if preview.get("company"):
+        print(f"{Y}│{X}  {B}{preview['company']}{X}")
     if preview.get("lots"):
         lots = preview["lots"]
         per_lot = int(preview["quantity"] / lots) if lots else 0

@@ -131,6 +131,30 @@ def test_digits_then_scale():
     assert resolve("seven four thousand".split(), SENSEX, 73896, 1500)[0] == 74000
 
 
+def test_a_lone_and_does_not_hang():
+    # Regression: "and" is a number word ("a hundred and five"), and a run
+    # of just "and" never advanced the scanner - freezing the whole app on
+    # any command containing one.
+    import threading
+    from voice.strikes import number_spans
+    from voice.parser import parse
+    done = []
+    def run():
+        for said in (["l", "and", "t"], ["m", "and", "m"],
+                     ["buy", "call", "and", "put"], ["and"], ["and", "and"]):
+            number_spans(said)
+        for said in ("buy l and t delivery", "what is m and m at",
+                     "buy call and put", "larsen and toubro"):
+            parse(said)
+        done.append(True)
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    t.join(5)
+    assert done, "number_spans / parse did not finish - infinite loop"
+    assert number_spans(["one", "hundred", "and", "five"]) == [
+        (0, 4, ["one", "hundred", "and", "five"])]
+
+
 def test_no_numbers():
     assert read_order([], LADDER, SPOT) == (None, None, None)
 

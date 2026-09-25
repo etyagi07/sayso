@@ -115,7 +115,7 @@ def test_rejection_is_reported_as_rejection():
     # pending, not filled yet" while nothing had been sent.
     with Fake(place=lambda *a: {"status": "REJECTED",
                                 "reason": "Insufficient margin"}):
-        r = agent.handle("buy one yesbank", YES)
+        r = agent.handle("buy one yesbank intraday", YES)
         assert r["outcome"] == "rejected"
         assert "pending" not in r["speak"].lower()
         assert "Insufficient margin" in r["speak"]
@@ -126,7 +126,7 @@ def test_lost_reply_is_not_called_a_rejection():
     # A dropped connection does not mean the broker refused. Saying
     # "rejected" invites a retry and a doubled position.
     with Fake(place=lambda *a: {"status": "UNKNOWN", "reason": "timeout"}):
-        r = agent.handle("buy one yesbank", YES)
+        r = agent.handle("buy one yesbank intraday", YES)
         assert r["outcome"] == "unknown"
         assert "rejected" not in r["speak"].lower()
         assert "order book" in r["speak"].lower()
@@ -136,7 +136,7 @@ def test_lost_reply_is_not_called_a_rejection():
 def test_exchange_rejection_after_acceptance_is_not_counted():
     with Fake(wait_for_outcome=lambda n, **k: {
             "status": "REJECTED", "final": True, "reason": "Circuit limit"}):
-        r = agent.handle("buy one yesbank", YES)
+        r = agent.handle("buy one yesbank intraday", YES)
         assert r["outcome"] == "rejected"
         assert "Circuit limit" in r["speak"]
         assert orders_counted() == 0
@@ -145,7 +145,7 @@ def test_exchange_rejection_after_acceptance_is_not_counted():
 def test_resting_order_says_resting():
     with Fake(wait_for_outcome=lambda n, **k: {
             "status": "OPEN", "final": False, "quantity": 1, "filled": 0}):
-        r = agent.handle("buy one yesbank", YES)
+        r = agent.handle("buy one yesbank intraday", YES)
         assert r["outcome"] == "resting"
         assert "not filled" in r["speak"]
 
@@ -154,7 +154,7 @@ def test_partial_fill_says_partial():
     with Fake(wait_for_outcome=lambda n, **k: {
             "status": "OPEN", "final": False, "quantity": 4, "filled": 1,
             "avg_fill_price": 22.45}):
-        r = agent.handle("buy four yesbank", YES)
+        r = agent.handle("buy four yesbank intraday", YES)
         assert r["outcome"] == "partial"
         assert "1 of 4" in r["speak"]
 
@@ -175,15 +175,17 @@ def test_expired_session_is_not_an_empty_account():
 # --- sending what was confirmed ------------------------------------------
 
 def test_confirmed_symbol_is_the_one_sent():
-    # Regression: after confirmation the symbol was searched for again.
-    looked_up = []
-    with Fake(resolve_symbol=lambda name, exchange="NSE": (
-            looked_up.append(name) or {
-                "tsym": "YESBANK-EQ", "token": "11915",
-                "exchange": "NSE", "alternatives": []})) as f:
-        agent.handle("buy one yesbank", YES)
-        assert looked_up == ["yesbank"], f"searched again: {looked_up}"
-        assert f.sent[0]["tsym"] == "YESBANK-EQ"
+    # Regression: after confirmation the symbol was searched for again, and
+    # names were found by prefix search - which is how "idea" became
+    # IDEAFORGE. Stocks now come from a known list; the broker is never
+    # searched, and what was confirmed is exactly what is sent.
+    searched = []
+    shown = {}
+    with Fake(resolve_symbol=lambda *a, **k: searched.append(a)) as f:
+        agent.handle("buy one yesbank intraday",
+                     lambda p: (shown.update(p), True)[1])
+        assert not searched, "searched the broker for a stock name"
+        assert f.sent[0]["tsym"] == shown["symbol"] == "YESBANK-EQ"
 
 
 def test_edited_price_is_sent_on_exit():
@@ -209,7 +211,7 @@ def test_unchecked_quote_never_prices_an_order():
     # Regression: the equity confirm box priced off a raw quote, which the
     # broker sometimes returns for the wrong instrument.
     with Fake(quote_checked=lambda *a, **k: None) as f:
-        r = agent.handle("buy one yesbank", YES)
+        r = agent.handle("buy one yesbank intraday", YES)
         assert r.get("blocked")
         assert not f.sent
 
@@ -253,7 +255,7 @@ def test_exit_asks_when_two_positions_match():
 
 def test_declining_sends_nothing():
     with Fake() as f:
-        r = agent.handle("buy one yesbank", NO)
+        r = agent.handle("buy one yesbank intraday", NO)
         assert r["speak"] == "Cancelled."
         assert not f.sent
         assert orders_counted() == 0
@@ -368,6 +370,58 @@ def test_things_that_are_not_instructions_do_nothing():
             r = agent.handle(said, YES)
             assert "preview" not in r, said
         assert not f.sent
+
+
+# --- stocks ---------------------------------------------------------------
+
+def test_asks_intraday_or_delivery_and_uses_the_answer():
+    with Fake() as f:
+        r = agent.handle("buy one yesbank", YES)
+        assert r.get("needs_answer") == "product" and not f.sent
+        agent.handle("delivery", YES)
+        assert f.sent and f.sent[0]["product"] == "C"
+
+
+def test_asks_how_many_and_uses_the_answer():
+    with Fake() as f:
+        r = agent.handle("buy yesbank intraday", YES)
+        assert r.get("needs_answer") == "quantity" and not f.sent
+        agent.handle("three", YES)
+        assert f.sent and f.sent[0]["qty"] == 3 and f.sent[0]["product"] == "I"
+
+
+def test_company_that_could_be_two_is_asked_about():
+    with Fake() as f:
+        for said in ("buy one hdfc intraday", "buy one tata motors intraday",
+                     "buy one bajaj intraday"):
+            r = agent.handle(said, YES)
+            assert r.get("needs_clarification"), said
+        assert not f.sent
+
+
+def test_unknown_company_is_refused_not_searched():
+    # The very first bug: "idea" became IDEAFORGE via prefix search.
+    with Fake() as f:
+        r = agent.handle("buy one idea intraday", YES)
+        assert "don't know" in r["speak"] and not f.sent
+
+
+def test_preview_names_the_company():
+    shown = {}
+    with Fake():
+        agent.handle("buy one yesbank intraday",
+                     lambda p: (shown.update(p), False)[1])
+        assert shown["company"] == "Yes Bank"
+        assert "intraday" in shown["say"]
+
+
+def test_exit_keeps_the_positions_product():
+    held = [{"symbol": "YESBANK-EQ", "qty": 5, "avg_price": 22.0,
+             "ltp": 22.44, "prd": "I"}]
+    with Fake(positions=lambda include_closed=False: held) as f:
+        r = agent.handle("sell my yesbank", YES)
+        assert r.get("needs_answer") is None, "asked intraday/delivery on an exit"
+        assert f.sent[0]["product"] == "I"
 
 
 if __name__ == "__main__":
