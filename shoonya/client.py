@@ -16,6 +16,23 @@ ROOT = Path(__file__).resolve().parent.parent
 SESSION_FILE = ROOT / ".session.json"
 
 
+def _load_dotenv_force():
+    """Re-read .env, overriding what is already in the environment.
+
+    Used after credentials are entered interactively, so the new values
+    take effect in a process that started without them.
+    """
+    env_file = ROOT / ".env"
+    if not env_file.exists():
+        return
+    for line in env_file.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        os.environ[key.strip()] = value.strip()
+
+
 def _load_dotenv():
     """Populate os.environ from .env, without pulling in python-dotenv."""
     env_file = ROOT / ".env"
@@ -33,8 +50,12 @@ _load_dotenv()
 
 
 class Shoonya(NorenApi):
-    def __init__(self):
+    def __init__(self, ask=False):
         super().__init__(host=HOST, websocket=WS)
+        if ask:
+            from shoonya import credentials
+            credentials.ensure()
+            _load_dotenv_force()
         self.client_id = _env("SHOONYA_CLIENT_ID")
         self.user_id = _env("SHOONYA_USER_ID")
         self.secret_code = _env("SHOONYA_SECRET_CODE")
@@ -145,7 +166,10 @@ def _env(name):
     try:
         return os.environ[name]
     except KeyError:
-        raise SystemExit(f"Missing env var {name}. Copy .env.example to .env and fill it in.")
+        raise SystemExit(
+            f"Missing {name}.\n"
+            f"  Run: python -m shoonya.credentials"
+        )
 
 
 def _extract_code(pasted):

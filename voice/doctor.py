@@ -82,16 +82,15 @@ def main():
 
     env = ROOT / ".env"
     if not env.exists():
-        check("credentials", False, ".env missing",
-              "cp .env.example .env    (then fill in all three values)")
+        check("credentials", False, "not set",
+              "python -m shoonya.credentials")
     else:
         text = env.read_text()
         filled = all(f"{k}=" in text and text.split(f"{k}=")[1].split("\n")[0].strip()
                      for k in ("SHOONYA_CLIENT_ID", "SHOONYA_USER_ID",
                                "SHOONYA_SECRET_CODE"))
         check("credentials", filled, ".env" if filled else "a field is empty",
-              "Fill in SHOONYA_CLIENT_ID, SHOONYA_USER_ID and "
-              "SHOONYA_SECRET_CODE in .env")
+              "python -m shoonya.credentials")
 
     session_ok = False
     try:
