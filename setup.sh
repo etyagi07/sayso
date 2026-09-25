@@ -40,19 +40,11 @@ echo "${D}   installing dependencies (a few minutes on first run)...${X}"
 ./.venv/bin/pip install -q -r requirements.txt
 echo "${G}ok${X} dependencies installed"
 
-# --- credentials ------------------------------------------------------
-if [ ! -f .env ]; then
-  cp .env.example .env
-  echo "${Y}!!${X} created .env - fill in your three Shoonya values before logging in"
-else
-  echo "${G}ok${X} .env exists"
-fi
-
 echo
 echo "${D}Next steps:${X}"
-echo "  1. Put your credentials in .env        ${D}(client id, user id, secret code)${X}"
-echo "  2. ./.venv/bin/python -m voice.calibrate   ${D}measures your microphone${X}"
-echo "  3. ./.venv/bin/python -m shoonya.login     ${D}once per trading day${X}"
-echo "  4. ./.venv/bin/python -m voice.doctor      ${D}checks everything${X}"
-echo "  5. ./.venv/bin/python -m voice.main        ${D}run it${X}"
+echo "  1. ./.venv/bin/python -m shoonya.credentials  ${D}your API credentials${X}"
+echo "  2. ./.venv/bin/python -m voice.calibrate      ${D}measures your microphone${X}"
+echo "  3. ./.venv/bin/python -m shoonya.login        ${D}once per trading day${X}"
+echo "  4. ./.venv/bin/python -m voice.doctor         ${D}checks everything${X}"
+echo "  5. ./.venv/bin/python -m voice.main           ${D}run it${X}"
 echo

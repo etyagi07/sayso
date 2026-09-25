@@ -37,19 +37,11 @@ Write-Host "   installing dependencies (a few minutes on first run)..." -Foregro
 & .\.venv\Scripts\pip.exe install -q -r requirements.txt
 Write-Host "ok dependencies installed" -ForegroundColor Green
 
-# --- credentials ------------------------------------------------------
-if (-not (Test-Path .env)) {
-    Copy-Item .env.example .env
-    Write-Host "!! created .env - fill in your three Shoonya values" -ForegroundColor Yellow
-} else {
-    Write-Host "ok .env exists" -ForegroundColor Green
-}
-
 Write-Host ""
 Write-Host "Next steps:" -ForegroundColor DarkGray
-Write-Host "  1. Put your credentials in .env"
-Write-Host "  2. .\.venv\Scripts\python.exe -m voice.calibrate   measures your microphone"
-Write-Host "  3. .\.venv\Scripts\python.exe -m shoonya.login     once per trading day"
-Write-Host "  4. .\.venv\Scripts\python.exe -m voice.doctor      checks everything"
-Write-Host "  5. .\.venv\Scripts\python.exe -m voice.main        run it"
+Write-Host "  1. .\.venv\Scripts\python.exe -m shoonya.credentials  your API credentials"
+Write-Host "  2. .\.venv\Scripts\python.exe -m voice.calibrate      measures your microphone"
+Write-Host "  3. .\.venv\Scripts\python.exe -m shoonya.login        once per trading day"
+Write-Host "  4. .\.venv\Scripts\python.exe -m voice.doctor         checks everything"
+Write-Host "  5. .\.venv\Scripts\python.exe -m voice.main           run it"
 Write-Host ""
