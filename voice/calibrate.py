@@ -48,10 +48,24 @@ def calibrate():
         return 1
     print(f"\nMicrophone: {device['name']}\n")
 
-    print(f"{DIM}Step 1 of 2 - stay quiet for 3 seconds.{X}")
-    input("  press Enter when ready: ")
-    quiet = _measure(3, "silence")
-    floor = float(np.percentile(quiet, 90))
+    # A "quiet" reading much above this is someone talking, a fan right
+    # next to the microphone, or music - all of which would push the
+    # threshold so high that speech never registers.
+    NOISY = 0.02
+
+    while True:
+        print(f"{DIM}Step 1 of 2 - stay quiet for 3 seconds.{X}")
+        input("  press Enter when ready: ")
+        quiet = _measure(3, "silence")
+        floor = float(np.percentile(quiet, 90))
+        if floor <= NOISY:
+            break
+        print(f"\n{Y}  That measured {floor:.4f} - louder than a quiet room.{X}")
+        print(f"{DIM}  Were you talking, or is something noisy nearby?{X}")
+        answer = input(f"  Try again? [{G}Y{X}/n]: ").strip().lower()
+        if answer not in ("", "y", "yes"):
+            print(f"{DIM}  Continuing with {floor:.4f} as the floor.{X}")
+            break
 
     print(f"\n{DIM}Step 2 of 2 - say \"buy one call at market\" a few times.{X}")
     input("  press Enter when ready: ")
