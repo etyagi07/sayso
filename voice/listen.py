@@ -1,52 +1,88 @@
-"""Local speech capture and transcription via Whisper (MLX, on-device).
+"""Speech capture and transcription, on whatever machine this is.
 
-Activation is a toggle, not push-to-hold: press Enter, the indicator turns
-red, speak, and it stops on its own once you go quiet. Nothing is recorded
-between turns - the stream only opens while armed.
+Recognition runs locally: MLX on Apple Silicon (fastest), faster-whisper
+everywhere else. Both run the same OpenAI Whisper models; no audio leaves
+the machine either way.
+
+Microphone sensitivity is not a constant - it belongs to the computer and
+the room, so it is read from config and set by `python -m voice.calibrate`.
 """
 
 import sys
+
 import numpy as np
 import sounddevice as sd
 
-SAMPLE_RATE = 16000          # what Whisper expects
-# Measured on this Mac at input volume 85: the room floor sits around 0.013
-# (fan/ambient) and actual speech peaks 0.06-0.19. Sit between the two, well
-# clear of the floor, or the turn never ends.
-SILENCE_RMS = 0.030          # below this counts as quiet
-SILENCE_SECONDS = 1.4        # quiet for this long ends the turn
-MAX_SECONDS = 15             # hard stop, so a stuck mic cannot run forever
-MIN_SPEECH_SECONDS = 0.4     # ignore a stray keypress or cough
+from voice import config
 
-# Small model: fast on Apple Silicon, accurate enough for short commands.
-MODEL = "mlx-community/whisper-small.en-mlx"
+SAMPLE_RATE = 16000          # what Whisper expects
 
 R, G, DIM, X = "\033[91m", "\033[92m", "\033[2m", "\033[0m"
 
-_model_ready = False
+PROMPT = ("Stock trading commands. Buy one YESBANK at twenty three "
+          "point two two. Sell two YESBANK at twenty three point two "
+          "zero. What is YESBANK at? "
+          "Tickers: YESBANK, RELIANCE, NIFTYBEES, SBIN, INFY.")
+
+_model = None
+
+
+class NotCalibrated(RuntimeError):
+    pass
+
+
+def _threshold():
+    value = config.get("silence_rms")
+    if value is None:
+        raise NotCalibrated(
+            "This microphone has not been measured yet.\n"
+            "  Run: python -m voice.calibrate"
+        )
+    return value
+
+
+def _mlx_repo(name):
+    return f"mlx-community/whisper-{name}-mlx"
 
 
 def warm_up():
-    """Load the model once, so the first command isn't slow."""
-    global _model_ready
-    if _model_ready:
+    """Load the recogniser once, so the first command is not slow."""
+    global _model
+    if _model is not None:
         return
-    import mlx_whisper
-    print(f"{DIM}  loading whisper ({MODEL.split('/')[-1]})...{X}", end="", flush=True)
-    mlx_whisper.transcribe(np.zeros(SAMPLE_RATE, dtype=np.float32),
-                           path_or_hf_repo=MODEL)
-    _model_ready = True
-    print(f"\r{DIM}  whisper ready{' ' * 30}{X}")
+    backend, name = config.backend(), config.get("asr_model")
+    label = f"{backend}:{name}"
+    print(f"{DIM}  loading speech model ({label})...{X}", end="", flush=True)
+
+    if backend == "mlx":
+        import mlx_whisper
+        mlx_whisper.transcribe(np.zeros(SAMPLE_RATE, dtype=np.float32),
+                               path_or_hf_repo=_mlx_repo(name))
+        _model = ("mlx", _mlx_repo(name))
+    else:
+        from faster_whisper import WhisperModel
+        # int8 runs acceptably on CPU, which is what non-Apple machines
+        # will mostly be using here.
+        _model = ("faster-whisper",
+                  WhisperModel(name, device="auto", compute_type="int8"))
+    print(f"\r{DIM}  speech model ready ({label}){' ' * 20}{X}")
 
 
 def record_until_silence():
-    """Record from the mic until the speaker stops. Returns float32 audio."""
+    """Record until the speaker stops. Returns float32 audio, or None."""
+    threshold = _threshold()
+    quiet_for = config.get("silence_seconds")
+    cap = config.get("max_seconds")
+    min_speech = config.get("min_speech_seconds")
+
     chunks, silent_for, spoke_for = [], 0.0, 0.0
-    block = int(SAMPLE_RATE * 0.05)  # 50ms blocks
+    block = int(SAMPLE_RATE * 0.05)
 
     with sd.InputStream(samplerate=SAMPLE_RATE, channels=1,
-                        dtype="float32", blocksize=block) as stream:
-        print(f"  {R}● RECORDING{X} {DIM}(speak, then pause){X}", end="", flush=True)
+                        dtype="float32", blocksize=block,
+                        device=config.get("input_device")) as stream:
+        print(f"  {R}* RECORDING{X} {DIM}(speak, then pause){X}",
+              end="", flush=True)
         while True:
             data, _ = stream.read(block)
             mono = data[:, 0]
@@ -54,45 +90,41 @@ def record_until_silence():
 
             rms = float(np.sqrt(np.mean(mono ** 2)))
             seconds = block / SAMPLE_RATE
-            if rms < SILENCE_RMS:
+            if rms < threshold:
                 silent_for += seconds
             else:
                 silent_for = 0.0
                 spoke_for += seconds
 
-            elapsed = len(chunks) * seconds
-            if spoke_for >= MIN_SPEECH_SECONDS and silent_for >= SILENCE_SECONDS:
+            if spoke_for >= min_speech and silent_for >= quiet_for:
                 break
-            if elapsed >= MAX_SECONDS:
+            if len(chunks) * seconds >= cap:
                 break
 
-    print(f"\r  {DIM}○ processing...{' ' * 25}{X}", end="", flush=True)
+    print(f"\r  {DIM}o processing...{' ' * 25}{X}", end="", flush=True)
     audio = np.concatenate(chunks) if chunks else np.zeros(1, dtype=np.float32)
-    return audio if spoke_for >= MIN_SPEECH_SECONDS else None
+    return audio if spoke_for >= min_speech else None
 
 
 def transcribe(audio):
-    import mlx_whisper
-    result = mlx_whisper.transcribe(
-        audio, path_or_hf_repo=MODEL, language="en",
-        # Bias the decoder toward the vocabulary it will actually hear.
-        # Bias the decoder toward this vocabulary. Without it YESBANK comes
-        # back as "years bank" or "yes bank".
-        initial_prompt=(
-            "Stock trading commands. Buy one YESBANK at twenty three "
-            "point two two. Sell two YESBANK at twenty three point two "
-            "zero. What is YESBANK at? "
-            "Tickers: YESBANK, RELIANCE, NIFTYBEES, SBIN, INFY."
-        ),
-    )
-    return (result.get("text") or "").strip()
+    warm_up()
+    kind, handle = _model
+    if kind == "mlx":
+        import mlx_whisper
+        result = mlx_whisper.transcribe(audio, path_or_hf_repo=handle,
+                                        language="en", initial_prompt=PROMPT)
+        return (result.get("text") or "").strip()
+
+    segments, _ = handle.transcribe(audio, language="en",
+                                    initial_prompt=PROMPT, beam_size=1)
+    return " ".join(s.text for s in segments).strip()
 
 
 def listen_once():
-    """Arm, record, transcribe. Returns the transcript, or None."""
+    """Record, transcribe. Returns the transcript, or None."""
     audio = record_until_silence()
     if audio is None:
-        print(f"\r  {DIM}○ nothing heard{' ' * 25}{X}")
+        print(f"\r  {DIM}o nothing heard{' ' * 25}{X}")
         return None
     text = transcribe(audio)
     print(f"\r{' ' * 50}\r", end="")
@@ -100,13 +132,17 @@ def listen_once():
 
 
 if __name__ == "__main__":
-    warm_up()
-    print(f"\n{G}● READY{X} {DIM}press Enter to speak, ctrl-c to quit{X}")
+    try:
+        warm_up()
+    except NotCalibrated as e:
+        print(f"{R}{e}{X}")
+        sys.exit(1)
+    print(f"\n{G}* READY{X} {DIM}press Enter to speak, ctrl-c to quit{X}")
     while True:
         try:
             input()
             said = listen_once()
             print(f"  heard: {said!r}" if said else f"  {DIM}(silence){X}")
         except KeyboardInterrupt:
-            print(f"\n{DIM}○ stopped{X}")
+            print(f"\n{DIM}o stopped{X}")
             sys.exit(0)

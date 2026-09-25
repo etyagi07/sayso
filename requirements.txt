@@ -1,6 +1,13 @@
-mlx-whisper==0.4.3
+# Broker API
 NorenRestApiOAuth==0.0.41
-numpy==2.5.3
 requests==2.34.2
-sounddevice==0.5.6
 websocket-client==1.9.2
+numpy==2.5.3
+
+# Audio capture
+sounddevice==0.5.6
+
+# Speech recognition - same Whisper models either way.
+# MLX is markedly faster but runs only on Apple Silicon.
+mlx-whisper==0.4.3; sys_platform == "darwin" and platform_machine == "arm64"
+faster-whisper>=1.0; not (sys_platform == "darwin" and platform_machine == "arm64")

@@ -58,6 +58,27 @@ def candidates(span):
     if value is not None and used == len(span) and float(value).is_integer():
         out.add(int(value))
 
+    # Digit-by-digit: "two three five zero" -> "2350". People read
+    # strikes out as digits, and the thousands/tens split of that string
+    # is what they mean - 23|50 is 23050.
+    digit_tokens = []
+    for tok in span:
+        if tok.isdigit():
+            digit_tokens.append(tok)
+        elif tok in numbers.ONES:
+            digit_tokens.append(str(numbers.ONES[tok]))
+        else:
+            digit_tokens = None
+            break
+    if digit_tokens:
+        joined = "".join(digit_tokens)
+        if joined.isdigit():
+            out.add(int(joined))
+            for cut in range(1, len(joined)):
+                head, tail = joined[:cut], joined[cut:]
+                if len(tail) <= 3:
+                    out.add(int(head) * 1000 + int(tail))
+
     # Split into parts and recombine the way traders actually speak.
     for cut in range(1, len(span)):
         left, right = span[:cut], span[cut:]
@@ -175,9 +196,13 @@ def read_order(spans, ladder, spot, band=600, max_lots=999):
                                 f"strike in \"{' '.join(span)}\". "
                                 f"Try saying them separately.")
 
-        # No strike in it - read the whole run as a quantity.
+        # No strike in it - read the whole run as a quantity, but only if
+        # it is short. A quantity is said in a word or two ("two", "ten");
+        # a long run like "two three five zero" is someone reading a
+        # strike out digit by digit, and summing it to 10 lots would build
+        # a huge order from a strike that simply was not recognised.
         value, used = numbers.parse(span)
-        if (value is not None and used == len(span)
+        if (len(span) <= 2 and value is not None and used == len(span)
                 and float(value).is_integer() and 1 <= value <= max_lots):
             if lots is not None:
                 return None, None, "I heard two quantities. Say one."

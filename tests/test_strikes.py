@@ -81,6 +81,34 @@ def test_conflicting_input_is_refused():
     assert err and "two strikes" in err
 
 
+def test_strike_read_out_digit_by_digit():
+    # People read strikes out as digits: "two three five zero" is 23050.
+    assert r("two three five zero") == 23050
+    assert r("two three one zero zero") == 23100
+    assert r("two two nine five zero") == 22950
+    assert r("2350") == 23050
+
+
+def test_digit_run_is_never_summed_into_a_quantity():
+    # Regression, and the worst bug found so far: "buy call for two three
+    # five zero" summed 2+3+5+0 to 10, ordered 10 lots at the money, and
+    # built an 82,972 rupee order from what was meant to be a strike.
+    lots, strike, err = read_order([["two", "three", "five", "zero"]],
+                                   LADDER, SPOT)
+    assert lots is None, f"digit run became {lots} lots"
+    assert strike == 23050
+
+    # An unreadable long run must refuse, not fall back to a lot count.
+    lots, strike, err = read_order([["nine", "nine", "nine", "nine"]],
+                                   LADDER, SPOT)
+    assert lots is None and strike is None and err
+
+
+def test_short_runs_are_still_quantities():
+    assert o("two") == (2, None, None)
+    assert o("ten") == (10, None, None)
+
+
 def test_no_numbers():
     assert read_order([], LADDER, SPOT) == (None, None, None)
 
