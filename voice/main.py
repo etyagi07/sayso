@@ -14,7 +14,7 @@ profile.from_argv()
 
 from voice import safety, speak, watch
 from voice.agent import friendly, handle
-from voice.cli import confirm
+from voice.cli import confirm, limits_line
 from voice.listen import listen_once, warm_up
 
 G, R, Y, DIM, X = "\033[92m", "\033[91m", "\033[93m", "\033[2m", "\033[0m"
@@ -28,8 +28,7 @@ def main():
     warm_up()
     caps = " · ".join(f"{n} {c} lots" for n, c in s["max_lots"].items())
     print(f"{DIM}  options: {caps}{X}")
-    print(f"{DIM}  equity : {', '.join(s['allowlist'])} · "
-          f"{s['max_order_value']:.0f}/order · all at market{X}")
+    print(limits_line(s))
     print(f"\n{G}● READY{X} {DIM}- press Enter to speak · 't' to type · ctrl-c to quit{X}\n")
 
     while True:

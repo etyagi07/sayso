@@ -14,6 +14,14 @@ G, R, Y, B, DIM, X = ("\033[92m", "\033[91m", "\033[93m",
                       "\033[94m", "\033[2m", "\033[0m")
 
 
+def limits_line(s=None):
+    """The equity half of the startup banner. One copy, used by both the
+    voice and text modes, so a renamed field cannot break only one of them."""
+    s = s or safety.status()
+    return (f"{DIM}  equity : {s['stocks']} stocks · up to "
+            f"{s['max_order_value']:,.0f}/order · all at market{X}")
+
+
 def confirm(preview):
     """Show the order and take a decision.
 
@@ -112,10 +120,9 @@ def main():
     print(f"\n{G}● LISTENING{X} {DIM}(text mode){X}")
     caps = " · ".join(f"{n} {c} lots" for n, c in s["max_lots"].items())
     print(f"{DIM}  options: {caps}{X}")
-    print(f"{DIM}  equity : {', '.join(s['allowlist'])} · "
-          f"{s['max_order_value']:.0f}/order · all at market{X}")
-    print(f"{DIM}  try: 'buy 1 yesbank' · 'what's yesbank at' · 'funds' · "
-          f"'what do i own' · ctrl-c to quit{X}\n")
+    print(limits_line(s))
+    print(f"{DIM}  try: 'what is the nifty call at' · 'buy sensex put' · "
+          f"'what is reliance at' · 'funds' · ctrl-c to quit{X}\n")
 
     while True:
         try:

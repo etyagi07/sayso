@@ -73,6 +73,21 @@ def test_prefix_search_is_gone():
     assert not hasattr(b, "resolve_symbol")
 
 
+def test_startup_banner_renders():
+    # Regression: renaming a limits field broke the banner in both entry
+    # points - the app crashed before it could hear a word. Nothing drew
+    # the banner in a test, so it went unnoticed.
+    from voice import safety
+    from voice.cli import limits_line
+    line = limits_line(safety.status())
+    assert "stocks" in line and "/order" in line
+    import inspect, voice.main, voice.cli
+    for mod in (voice.main, voice.cli):
+        src = inspect.getsource(mod)
+        for key in ("allowlist", "market_orders"):
+            assert f"s['{key}']" not in src, f"{mod.__name__} uses {key}"
+
+
 def test_public_names_exist():
     for module, names in PUBLIC.items():
         mod = importlib.import_module(module)
