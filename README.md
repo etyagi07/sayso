@@ -26,17 +26,46 @@ and nothing but the order itself is sent anywhere.
   per-day value caps that survive a restart, market orders disabled by
   default, circuit-band and tick-size validation, and a refusal to guess
   between similarly named instruments.
+- **Nifty options** — nearest weekly expiry, at-the-money by default, or any
+  listed strike you name. Contracts resolve from the broker's own symbol
+  master, so nothing is ever constructed by hand.
 - **Field notes on the Shoonya API** (below) — the undocumented behaviour and
-  misleading field names that cost a day to find.
+  misleading field names that cost days to find.
 
-It is a first iteration: it works, it has placed real trades, and it is
+It works, it has placed real trades in both equity and options, and it is
 honest about what it cannot do yet.
 
 ![Sayso placing a live buy and sell by voice](docs/demo.png)
 
 *Two voice commands, two live orders on NSE.*
 
-### Independently verified
+### Nifty options, by voice
+
+![Buying and exiting a Nifty call by voice](docs/options-demo.png)
+
+*"Buy call two three one five zero" — no symbol, no expiry, no price. It
+reads the live Nifty level, picks the nearest weekly expiry, resolves
+strike 23150 against the listed ladder, and prices through the spread.
+"Exit call" closes the whole position and reports the P&L first.*
+
+Two complete round trips on 25 September 2026, both closed within minutes:
+
+| Time | Contract | Side | Price | Result |
+|---|---|---|---|---|
+| 12:13:41 | NIFTY 29SEP26 23100 PE | BUY 65 | 96.30 | |
+| 12:14:38 | NIFTY 29SEP26 23100 PE | SELL 65 | 96.90 | **+₹39.00** |
+| 13:18:20 | NIFTY 29SEP26 23150 CE | BUY 65 | 72.35 | |
+| 13:19:16 | NIFTY 29SEP26 23150 CE | SELL 65 | 72.60 | **+₹16.25** |
+
+<p>
+<img src="docs/options-orderbook.png" width="300" alt="Shoonya order book showing the four option orders">
+<img src="docs/options-portfolio.png" width="300" alt="Shoonya portfolio showing 55.25 total MTM">
+</p>
+
+*The broker's own order book and portfolio, confirming the same four fills
+and ₹55.25 total. Each leg is 65 units — one Nifty lot.*
+
+### Equity, independently verified
 
 The same trades, in Shoonya's own order book — timestamps matching the
 terminal session exactly:
@@ -88,51 +117,72 @@ first voice-placed trade, including what each step should print.
 
 ## Setup
 
-Requires Python 3.12+, macOS (Apple Silicon for the MLX Whisper build), and a
-[Shoonya](https://shoonya.com) account with API access.
+Requires Python 3.12+, a microphone, and a [Shoonya](https://shoonya.com)
+account with API access. Runs on macOS and Windows; speech recognition uses
+MLX on Apple Silicon and faster-whisper elsewhere, both fully local.
 
 ```bash
-python3.12 -m venv .venv
-.venv/bin/pip install -r requirements.txt
-cp .env.example .env    # then fill in your credentials
+./setup.sh                                    # macOS / Linux
+powershell -ExecutionPolicy Bypass -File setup.ps1   # Windows
 ```
 
-Log in once per trading day (tokens are day-scoped):
+Then four short steps — the first two are once per machine, the third is
+once per trading day:
 
 ```bash
-.venv/bin/python -m shoonya.login
+.venv/bin/python -m shoonya.credentials   # asks for your API credentials
+.venv/bin/python -m voice.calibrate       # measures your microphone
+.venv/bin/python -m shoonya.login         # once per trading day
+.venv/bin/python -m voice.main            # run it
 ```
 
-Check the API works before adding voice:
+If anything misbehaves, this names the fix for each problem it finds:
 
 ```bash
-.venv/bin/python smoke_test.py      # read-only: funds, positions, quotes
+.venv/bin/python -m voice.doctor
 ```
 
-Then:
+Press Enter to speak, `t` to type instead.
 
-```bash
-.venv/bin/python -m voice.main
-```
-
-Press Enter to speak, `t` to type instead. If the mic returns silence, run
-`.venv/bin/python -m voice.miccheck` — it reports levels and tells you what
-to change.
+> **Microphone calibration is not optional.** The threshold that decides
+> "you stopped talking" depends on your microphone and your room. Running
+> `voice.calibrate` measures both and places the threshold between them.
+> Without it, the app will tell you it is uncalibrated rather than guess.
 
 ## What you can say
 
+**Options** — Nifty, nearest weekly expiry, at the money unless you say a
+strike:
+
 ```
-what's yesbank at
-funds
-what do i own
-buy one yesbank
-buy two yesbank at twenty three point two zero
-sell my yesbank
-what are my limits
+buy call                      buy put
+what is the call at           what is the put at
+buy 23100 call                buy twenty three fifty put
+buy call two three one five zero      (digit by digit also works)
+buy 2 lots of 23100 call
+exit call                     exit put
 ```
 
-Spoken prices ("twenty three point two two") are more reliable than digits,
-because the decoder no longer has to place a decimal point itself.
+Strikes are resolved against the live ladder, so "twenty three fifty"
+becomes 23050 and an unlisted strike like 23075 is refused rather than
+rounded. A genuinely ambiguous one ("twenty three hundred" — 23,000 or
+23,100?) asks rather than guessing.
+
+**Equity:**
+
+```
+what is yesbank at            buy one yesbank
+sell one yesbank              dump my yesbank
+```
+
+**Account:**
+
+```
+funds        what do i own        show me my orders        what are my limits
+```
+
+Phrasing is flexible — "grab me a put", "go long call", "square off my
+call" and "flatten my put" all work.
 
 ## Safety
 
@@ -141,22 +191,29 @@ what was said or parsed:
 
 | Limit | Default |
 |---|---|
-| Symbol allowlist | `YESBANK` only |
-| Max value per order | ₹100 |
-| Max quantity per order | 50 |
-| Market orders | disabled (limit orders only) |
-| Orders per day | 20 |
-| Value per day | ₹500 |
+| Option underlyings | `NIFTY` only |
+| Max lots per order | 10 |
+| Max premium per unit | ₹200 |
+| Option orders per day | 10 |
+| Equity allowlist | `YESBANK` only |
+| Max equity order value | ₹100 |
+| Equity orders per day | 20 |
 
 Daily counters persist to disk, so restarting does not reset your allowance.
 
-Beyond those: ambiguous symbol names are **refused**, not guessed — asking for
-"nifty" will not silently buy an ETF; limit prices are validated against the
-instrument's daily circuit band and snapped to its tick size before sending.
+Beyond those: ambiguous names and strikes are **refused**, not guessed;
+selling options to open is refused outright; prices are validated against the
+instrument's circuit band and snapped to its tick size; and every order shows
+lots, units and total before it can be sent.
+
+Orders go at market — Shoonya rejects `MKT` outright, so "at market" is a
+limit priced two ticks through the touch, which fills immediately with a
+bounded worst case. Press `p` at the confirmation to set your own limit
+instead.
 
 ## Limitations
 
-Known and deliberate, as of the first iteration:
+Known and deliberate:
 
 - **The parser is hand-rolled** and handles the phrasings its author thought
   of. Unanticipated wording fails safe ("I didn't catch an instruction")
@@ -166,11 +223,14 @@ Known and deliberate, as of the first iteration:
   renders YESBANK as "yes bank" or "years bank"; every new symbol needs an
   entry. Does not scale past testing.
 - **No spoken output.** Responses print to screen.
-- **No cancel or modify by voice.** You can open a position by voice but not
-  unwind one.
-- **No websocket.** Fills are polled after a fixed delay, not pushed.
-- **macOS only**, and the Whisper backend is Apple Silicon specific.
-- **No tests.**
+- **No cancel or modify by voice.** You can open and close positions by
+  voice, but a resting order has to be cancelled elsewhere.
+- **No websocket.** Fills are checked shortly after placing, not pushed.
+- **Windows is written but untested** — the setup script, the
+  faster-whisper backend and the platform-conditional dependencies are all
+  in place, but no Windows machine was available to run them.
+- **Tests cover the risky parsing only** (`tests/test_strikes.py`). The
+  broker layer has none.
 
 ## Notes on the Shoonya API
 
