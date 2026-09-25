@@ -69,10 +69,13 @@ expected, and the bit you need is in the address bar.
 It prints an authorize URL and opens your browser.
 
 1. Log in with your Shoonya user ID, password and OTP.
-2. You land on a dead `127.0.0.1` page. **Copy the whole URL** from the
-   address bar — it looks like
-   `127.0.0.1:8787/?code=2142a242-1f17-4977-a1a3-e36ec6779e6b`.
-3. Paste it at the prompt.
+2. You land on a dead `127.0.0.1` page. **This error is expected** — the
+   code you need is in the address bar, not on the page.
+
+![The redirect page after login, with the code in the address bar](docs/oauth-redirect.png)
+
+3. **Copy the whole URL** from the address bar and paste it at the prompt.
+   Pasting just the code, or `code=...`, works too.
 
 You should see:
 

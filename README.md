@@ -136,6 +136,16 @@ once per trading day:
 .venv/bin/python -m voice.main            # run it
 ```
 
+Login opens the broker's page in your browser. Afterwards it redirects to
+`127.0.0.1`, which shows a connection error — **that is expected**. Nothing
+listens on that port; the login code is in the address bar, and that is what
+you paste back.
+
+![The redirect page after login, with the code in the address bar](docs/oauth-redirect.png)
+
+Your password and OTP go to the broker, never to this program. All it ever
+sees is a short-lived, single-use code.
+
 If anything misbehaves, this names the fix for each problem it finds:
 
 ```bash
