@@ -348,6 +348,28 @@ def test_index_without_call_or_put_is_refused():
         assert not f.sent
 
 
+# --- how people actually talk ------------------------------------------
+
+def test_mid_sentence_correction_is_what_gets_previewed():
+    # Regression: "buy call no wait put" previewed a CALL - the thing just
+    # cancelled - and a quick 'y' would have bought it.
+    import voice.parser as parser
+    for said, expected in (("buy nifty call no wait put", "PE"),
+                           ("buy nifty put sorry call", "CE")):
+        assert parser.parse(said)["option_type"] == expected, said
+
+
+def test_things_that_are_not_instructions_do_nothing():
+    with Fake() as f:
+        for said in ("don't buy a call", "do not sell",
+                     "should i buy yesbank", "what if i buy a put",
+                     "what was yesterday's close on yesbank",
+                     "buy call put", "cancel", "never mind"):
+            r = agent.handle(said, YES)
+            assert "preview" not in r, said
+        assert not f.sent
+
+
 if __name__ == "__main__":
     passed = failed = 0
     for name, fn in sorted(globals().items()):

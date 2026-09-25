@@ -47,8 +47,97 @@ def _number(text):
         return WORD_NUMBERS.get(text)
 
 
+# Said to call something off, not to do it.
+CANCEL = re.compile(r"^(?:cancel|cancel that|never ?mind|stop|forget it|"
+                    r"scratch that|abort)$")
+# Hypotheticals and advice-seeking. "Should I buy a call" is a question,
+# and answering it with an order preview is the wrong kind of helpful.
+QUESTION = re.compile(r"^(?:should|would|could|what if|what was|what were|"
+                      r"do you think|is it a good|is now|why|when should)\b")
+# The speaker changing their mind mid-sentence. The last one wins.
+CORRECTION = re.compile(r"\b(?:no wait|no no|wait|sorry|i mean|actually|"
+                        r"make that|make it|change that to|rather|instead|no)\b")
+NEGATION = {"don't", "dont", "not", "never", "no"}
+
+
+def _slots(text):
+    """Option type, index and numbers mentioned in a fragment of speech."""
+    words = text.split()
+    opts = [OPTION_WORDS[w] for w in words if w in OPTION_WORDS]
+    index = next((INDEX_WORDS[w] for w in words if w in INDEX_WORDS), None)
+    spans = [span for _, _, span in strikes.number_spans(words)]
+    return (opts[-1] if opts else None), index, spans
+
+
 def parse(transcript):
-    """-> dict with 'intent' and whatever fields that intent carries."""
+    """-> dict with 'intent' and whatever fields that intent carries.
+
+    Handles how people actually talk before reading the command itself:
+    calling it off, asking rather than telling, negating, and correcting
+    themselves partway through.
+    """
+    t = normalise(transcript)
+    t = re.sub(r"[.!?,;:]+(?!\d)", " ", t)
+    t = " ".join(t.split())
+
+    if CANCEL.match(t):
+        return {"intent": "cancel"}
+    if re.search(r"\bcancel\b", t) and re.search(r"\border", t):
+        return {"intent": "cancel_order_unsupported"}
+    if QUESTION.match(t):
+        return {"intent": "question", "transcript": transcript}
+
+    words = t.split()
+    verbs = [i for i, w in enumerate(words)
+             if re.fullmatch(rf"{BUY_WORDS}|{SELL_WORDS}|{EXIT_WORDS}", w)]
+
+    # A correction: "buy call no wait put". Everything after the last
+    # correction word overrides what came before it.
+    marks = [m for m in CORRECTION.finditer(t)
+             if m.start() > (min(verbs) if verbs else -1) or not verbs]
+    if marks and verbs:
+        last = marks[-1]
+        before, after = t[:last.start()].strip(), t[last.end():].strip()
+        if after:
+            after_parsed = _parse_one(after)
+            if after_parsed["intent"] not in ("unknown", "index_answer",
+                                              "number_answer", "option_quote"):
+                return after_parsed          # a whole new command
+            base = _parse_one(before) if before else after_parsed
+            opt, index, spans = _slots(after)
+            if base["intent"].startswith("option_"):
+                if opt:
+                    base["option_type"] = opt
+                if index:
+                    base["underlying"] = index
+                if spans:
+                    base["number_spans"] = spans
+                base["corrected"] = True
+                return base
+
+    # "don't buy a call" - a negated action is not an instruction.
+    if verbs and any(w in NEGATION for w in words[:verbs[0]]):
+        return {"intent": "negated", "transcript": transcript}
+
+    # "buy a call not a put": drop option words that were negated; if both
+    # kinds still remain, it is genuinely unclear which was meant.
+    kinds = {OPTION_WORDS[w] for i, w in enumerate(words)
+             if w in OPTION_WORDS
+             and not (i > 0 and words[i - 1] in NEGATION)
+             and not (i > 1 and words[i - 2] in NEGATION)}
+    if len(kinds) > 1:
+        return {"intent": "option_ambiguous", "transcript": transcript}
+    if len(kinds) == 1 and any(w in NEGATION for w in words):
+        keep = kinds.pop()
+        cleaned = [w for i, w in enumerate(words)
+                   if not (w in OPTION_WORDS and OPTION_WORDS[w] != keep)]
+        t = " ".join(cleaned)
+
+    return _parse_one(t)
+
+
+def _parse_one(transcript):
+    """Read one command, with no negation or correction left in it."""
     # Repair recogniser near-misses and collapse synonyms before any
     # pattern matching, so the rules below only see canonical vocabulary.
     t = normalise(transcript)

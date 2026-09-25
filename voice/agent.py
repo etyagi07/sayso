@@ -62,6 +62,22 @@ def _handle(transcript, confirm):
 
     kind = intent["intent"]
 
+    if kind == "cancel":
+        return {"speak": "OK, nothing done.", "cancelled": True}
+    if kind == "cancel_order_unsupported":
+        return {"speak": "Cancelling an order by voice isn't supported yet. "
+                         "Use the broker's app for that one.", "blocked": True}
+    if kind == "question":
+        return {"speak": "That sounded like a question, so I haven't done "
+                         "anything. Say it as a command to trade.",
+                "blocked": True}
+    if kind == "negated":
+        return {"speak": "You said not to, so I haven't done anything.",
+                "blocked": True}
+    if kind == "option_ambiguous":
+        return {"speak": "I heard both call and put. Say just one.",
+                "blocked": True, "needs_clarification": True}
+
     if kind == "index_unsupported":
         return {"speak": f"{intent['index']} options aren't supported. You "
                          f"can trade Nifty, Bank Nifty and Sensex.",
