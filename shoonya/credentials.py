@@ -68,9 +68,14 @@ def write_env_file(values):
     ENV_FILE.chmod(stat.S_IRUSR | stat.S_IWUSR)
 
 
+def _clean(text):
+    """Trim what terminals and copy-paste add: spaces, quotes, stray slashes."""
+    return text.strip().strip("\\/").strip().strip('"\'')
+
+
 def _ask_plain(label, shown, current, hint):
     while True:
-        entered = input(f"  {label}{shown}: ").strip()
+        entered = _clean(input(f"  {label}{shown}: "))
         if not entered and current:
             return current
         if entered:
@@ -92,7 +97,7 @@ def _ask_secret(label, shown, current):
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", getpass.GetPassWarning)
-                entered = getpass.getpass(f"  {label}{shown}: ").strip()
+                entered = _clean(getpass.getpass(f"  {label}{shown}: "))
         except (getpass.GetPassWarning, OSError):
             entered = ""
 
@@ -125,6 +130,12 @@ def _dedupe_paste(text):
     # wins because 8 copies of a 64-char secret is also 2 copies of a
     # 256-char block, and 64 is the one actually wanted. The lower bound
     # stops "aaaa" being read as "a" repeated.
+    # Only worth checking when the input is longer than a single secret
+    # could plausibly be. Otherwise a legitimately repetitive value gets
+    # flagged as a double paste.
+    if len(text) <= 80:
+        return text
+
     for size in range(16, len(text) // 2 + 1):
         if len(text) % size:
             continue
@@ -147,7 +158,9 @@ def prompt(save=None):
     stored = read_env_file()
     print(f"\n{DIM}Shoonya API credentials{X}")
     print(f"{DIM}  From your API app registration at shoonya.com.{X}")
-    print(f"{DIM}  Leave blank to keep an existing value.{X}\n")
+    if stored:
+        print(f"{DIM}  Leave blank to keep an existing value.{X}")
+    print(f"{DIM}  Client ID usually ends in _U; the User ID does not.{X}\n")
 
     values = {}
     for key, label, hint, secret in FIELDS:
@@ -159,6 +172,23 @@ def prompt(save=None):
         entered = (_ask_secret(label, shown, current) if secret
                    else _ask_plain(label, shown, current, hint))
         values[key] = entered
+
+    # The two IDs are related: the client ID is the user ID plus a suffix.
+    # Catching a mismatch here saves a confusing failure at login.
+    client, user = values["SHOONYA_CLIENT_ID"], values["SHOONYA_USER_ID"]
+    # The client ID is the user ID plus a suffix, so the user ID never
+    # carries one. Typing the client ID into both is the common slip, and
+    # startswith() alone does not catch it because they are then equal.
+    if "_" in user or user == client or not client.startswith(user):
+        guess = client.split("_")[0]
+        print(f"\n{Y}  The Client ID normally starts with the User ID.{X}")
+        print(f"{DIM}  You entered client {client!r}, user {user!r}.{X}")
+        if guess and guess != user:
+            answer = input(f"  Use {G}{guess}{X} as the User ID? "
+                           f"[{G}Y{X}/n]: ").strip().lower()
+            if answer in ("", "y", "yes"):
+                values["SHOONYA_USER_ID"] = user = guess
+                print(f"    {DIM}user id set to {guess}{X}")
 
     secret_len = len(values["SHOONYA_SECRET_CODE"])
     if secret_len != 64:
