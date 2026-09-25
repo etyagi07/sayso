@@ -16,9 +16,14 @@ ROOT = Path(__file__).resolve().parent.parent
 results = []
 
 
-def check(name, ok, detail="", fix=""):
-    results.append((name, ok, detail, fix))
-    mark = f"{G}ok  {X}" if ok else f"{R}FAIL{X}"
+def check(name, ok, detail="", fix="", blocking=True):
+    """blocking=False marks something that limits what you can do rather
+    than stopping you - the app still runs."""
+    results.append((name, ok, detail, fix, blocking))
+    if ok:
+        mark = f"{G}ok  {X}"
+    else:
+        mark = f"{R}FAIL{X}" if blocking else f"{Y}note{X}"
     print(f"  {mark} {name:<26} {DIM}{detail}{X}")
     if not ok and fix:
         for line in fix.splitlines():
@@ -120,18 +125,25 @@ def main():
             check("f&o segment", fo,
                   "enabled" if fo else res.get("emsg", "")[:40],
                   "Options need the F&O segment activated with the broker.\n"
-                  "Equity still works without it.")
+                  "Everything else works without it - equity orders, quotes,\n"
+                  "and the whole voice pipeline.",
+                  blocking=False)
         except Exception as e:
             check("market data", False, f"{type(e).__name__}: {str(e)[:40]}")
 
-    failed = [r for r in results if not r[1]]
+    blocking = [r for r in results if not r[1] and r[4]]
+    notes = [r for r in results if not r[1] and not r[4]]
     print()
-    if failed:
-        print(f"  {R}{len(failed)} of {len(results)} checks failed{X} - "
+    if blocking:
+        print(f"  {R}{len(blocking)} of {len(results)} checks failed{X} - "
               f"fix the highlighted lines above, then run this again.\n")
         return 1
-    print(f"  {G}all {len(results)} checks passed{X} - "
-          f"run: python -m voice.main\n")
+
+    summary = f"  {G}ready{X} - run: python -m voice.main"
+    if notes:
+        names = ", ".join(r[0] for r in notes)
+        summary += f"\n  {Y}limited:{X} {DIM}{names} - see the note above{X}"
+    print(summary + "\n")
     return 0
 
 
