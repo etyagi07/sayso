@@ -6,7 +6,7 @@ resolved instrument, the price, and the total cost on screen and pressed y.
 """
 
 import shoonya.broker as b
-from voice import safety
+from voice import safety, strikes
 from voice.parser import parse
 
 
@@ -36,8 +36,10 @@ def handle(transcript, confirm=None):
                 "data": live}
     if kind == "limits":
         s = safety.status()
+        lot_words = ("no lot limit" if s['max_lots'] is None
+                     else f"{s['max_lots']} lot maximum")
         return {"speak": (f"Options: {', '.join(s['option_allowlist'])} only, "
-                          f"{s['max_lots']} lot maximum, premium up to "
+                          f"{lot_words}, premium up to "
                           f"{s['max_premium_per_unit']:.0f}. "
                           f"Equity: {', '.join(s['allowlist'])} only, "
                           f"{s['max_order_value']:.0f} rupees per order. "
@@ -92,11 +94,13 @@ def handle(transcript, confirm=None):
             return {"speak": f"How many {sym['tsym']} do you want to {side_word}?",
                     "needs_quantity": True, "data": sym}
 
-    # Price against live depth: cross the spread so it actually fills.
-    price = intent["price"]
+    # Everything goes at market: a limit priced through the touch so it
+    # fills now. A price said out loud is shown on the confirmation screen
+    # rather than executed - numbers are the least reliable thing in speech.
+    spoken_price = intent["price"]
+    price = b.marketable_price(intent["side"], b.quote_view(q))
     if price is None:
-        book_side = "sp1" if intent["side"] == "B" else "bp1"
-        price = b._f(q.get(book_side)) or ltp
+        return {"speak": f"No usable price for {sym['tsym']}.", "blocked": True}
 
     try:
         value = safety.check(sym["tsym"], quantity, price, "LMT")
@@ -105,33 +109,60 @@ def handle(transcript, confirm=None):
 
     preview = {
         "action": side_word.upper(), "symbol": sym["tsym"], "quantity": quantity,
-        "price": price, "value": value, "ltp": ltp,
+        "price": price, "value": value, "ltp": ltp, "at_market": True,
+        "spoken_price": spoken_price,
+        "bid": b._f(q.get("bp1")), "ask": b._f(q.get("sp1")),
+        "tick": b._f(q.get("ti")) or 0.05,
+        "lower_circuit": b._f(q.get("lc")), "upper_circuit": b._f(q.get("uc")),
         "spoken": (f"{side_word} {quantity} {sym['tsym'].replace('-EQ','')} "
-                   f"at {price:.2f}, total {value:.2f} rupees. "
-                   f"Market is {ltp:.2f}."),
+                   f"at market, about {price:.2f}, "
+                   f"total {value:.2f} rupees."),
     }
 
     if confirm is None or not confirm(preview):
         return {"speak": "Cancelled.", "preview": preview, "confirmed": False}
 
+    price = preview["price"]
+    try:
+        value = safety.check(sym["tsym"], quantity, price, "LMT")
+    except safety.Rejected as e:
+        return {"speak": str(e), "blocked": True}
+
     result = b.place_and_confirm(intent["side"], sym["tsym"], quantity,
                                  price=price, live=True)
-    if result.get("status") == "REJECTED":
-        return {"speak": f"Rejected. {result.get('reason','')}", "data": result}
-
-    safety.record(value)
-    outcome = result.get("outcome", {})
-    if outcome.get("status") == "COMPLETE":
-        spoken = (f"Done. {side_word} {outcome['filled']} "
-                  f"{sym['tsym'].replace('-EQ','')} at {outcome['avg_fill_price']}.")
-    else:
-        spoken = f"Order is {outcome.get('status','pending')}, not filled yet."
-    return {"speak": spoken, "data": result, "confirmed": True}
+    name = sym["tsym"].replace("-EQ", "")
+    return _report(result, f"{side_word} {quantity} {name}", value,
+                   segment="equity")
 
 
 # --- options ---------------------------------------------------------------
 
 _SPOKEN = {"CE": "call", "PE": "put"}
+
+
+def _ladder_and_spot():
+    """The strikes actually listed for the nearest expiry, plus spot."""
+    from shoonya import instruments as ins
+    idx = b.quote_checked("NSE", "26000")
+    if not idx:
+        return None, None
+    spot = float(idx["lp"])
+    expiries = ins.expiries()
+    if not expiries:
+        return None, None
+    ladder = {x["strike"] for x in ins.load(symbol="NIFTY")
+              if x["expiry"] == expiries[0]}
+    return ladder, spot
+
+
+def _expiry_words(iso):
+    """'2026-09-29' -> '29 Sep' - short enough to say, precise enough to act on."""
+    from datetime import date
+    try:
+        d = date.fromisoformat(str(iso))
+    except (TypeError, ValueError):
+        return str(iso)
+    return f"{d.day} {d.strftime('%b')}"
 
 
 def _handle_option(intent, confirm):
@@ -145,16 +176,29 @@ def _handle_option(intent, confirm):
     if kind == "option_exit":
         return _exit_option(opt, confirm)
 
-    c = b.option_contract(opt)
+    # Quantity and strike both come from the numbers that were spoken;
+    # telling them apart needs the live ladder, so it happens here.
+    lots = strike = None
+    if kind == "option_buy":
+        ladder, spot = _ladder_and_spot()
+        if ladder is None:
+            return {"speak": "Could not read the Nifty level.", "blocked": True}
+        lots, strike, err = strikes.read_order(
+            intent.get("number_spans"), ladder, spot)
+        if err:
+            return {"speak": err, "blocked": True, "needs_clarification": True}
+
+    c = b.option_contract(opt, strike=strike)
     if "error" in c:
         return {"speak": c["error"], "blocked": True}
 
     if kind == "option_quote":
-        return {"speak": f"The {c['strike']} {word} is at {c['ltp']:.2f}, "
-                         f"Nifty at {c['spot']:.0f}.", "data": c}
+        return {"speak": f"The {_expiry_words(c['expiry'])} {c['strike']} {word} "
+                         f"is at {c['ltp']:.2f}, Nifty at {c['spot']:.0f}.",
+                "data": c}
 
     # --- buy to open ---------------------------------------------------
-    lots = int(intent.get("lots") or 1)
+    lots = int(lots or 1)
     price = b.marketable_price("B", c)
     if price is None:
         return {"speak": f"No usable price for {c['tsym']}.", "blocked": True}
@@ -173,18 +217,31 @@ def _handle_option(intent, confirm):
     preview = {
         "action": "BUY", "symbol": c["tsym"], "quantity": units,
         "lots": lots, "price": price, "value": value, "ltp": c["ltp"],
-        "spoken": (f"buy {lots} lot of the {c['strike']} {word}, "
-                   f"{units} units at {price:.2f}, "
-                   f"total {value:,.0f} rupees. Nifty at {c['spot']:.0f}."
-                   + adjusted),
+        "at_market": True, "spoken_price": None,
+        "bid": c["bid"], "ask": c["ask"], "tick": c["tick"],
+        "lower_circuit": c["lower_circuit"], "upper_circuit": c["upper_circuit"],
+        "expiry": c["expiry"], "strike": c["strike"],
+        "spoken": (f"buy {lots} lot{'s' if lots != 1 else ''} of the "
+                   f"{_expiry_words(c['expiry'])} "
+                   f"{c['strike']} {word}, {units} units at market, "
+                   f"about {price:.2f}, total {value:,.0f} rupees. "
+                   f"Nifty at {c['spot']:.0f}." + adjusted),
     }
     if confirm is None or not confirm(preview):
         return {"speak": "Cancelled.", "preview": preview, "confirmed": False}
 
+    price = preview["price"]
+    try:
+        value, units = safety.check_option(c["tsym"], "NIFTY", lots,
+                                           c["lot"], price)
+    except safety.Rejected as e:
+        return {"speak": str(e), "blocked": True}
+
     result = b.place_direct_and_confirm("B", c["tsym"], units, price,
                                         exchange="NFO", product="M")
-    return _report(result, f"bought {lots} lot of the {c['strike']} {word}",
-                   value)
+    return _report(result,
+                   f"bought {lots} lot{'s' if lots != 1 else ''} of the "
+                   f"{c['strike']} {word}", value)
 
 
 def _exit_option(opt, confirm):
@@ -202,6 +259,14 @@ def _exit_option(opt, confirm):
         return {"speak": f"Could not price {pos['symbol']} to exit it.",
                 "blocked": True}
 
+    ltp = b._f(q.get("lp"))
+    # What the position is actually worth right now, in rupees - a trader
+    # exiting wants the number, not two prices to subtract in their head.
+    pnl = None
+    if ltp is not None and pos.get("avg_price"):
+        per_unit = ltp - pos["avg_price"]
+        pnl = round(per_unit * pos["qty"], 2)
+
     side = "S" if pos["qty"] > 0 else "B"
     price = b.marketable_price(side, {
         "tick": b._f(q.get("ti")) or 0.05,
@@ -210,14 +275,25 @@ def _exit_option(opt, confirm):
         "lower_circuit": b._f(q.get("lc")), "upper_circuit": b._f(q.get("uc")),
     })
     value = round(qty * price, 2)
+    if pnl is None:
+        result_words = ""
+    elif pnl >= 0:
+        result_words = f" You're up {pnl:,.0f} rupees."
+    else:
+        result_words = f" You're down {abs(pnl):,.0f} rupees."
+
     preview = {
         "action": "EXIT " + ("SELL" if side == "S" else "BUY"),
         "symbol": pos["symbol"], "quantity": qty, "lots": None,
-        "price": price, "value": value, "ltp": b._f(q.get("lp")),
-        "spoken": (f"exit your {word} position, {qty} units at {price:.2f}, "
+        "price": price, "value": value, "ltp": ltp, "at_market": True,
+        "pnl": pnl, "entry": pos.get("avg_price"),
+        "bid": b._f(q.get("bp1")), "ask": b._f(q.get("sp1")),
+        "tick": b._f(q.get("ti")) or 0.05,
+        "lower_circuit": b._f(q.get("lc")), "upper_circuit": b._f(q.get("uc")),
+        "spoken": (f"exit your {word} position, {qty} units at market, "
                    f"about {value:,.0f} rupees. "
-                   f"Entry was {pos['avg_price']:.2f}, "
-                   f"now {b._f(q.get('lp')):.2f}."),
+                   f"Entry was {pos['avg_price']:.2f}, now {ltp:.2f}."
+                   + result_words),
     }
     if confirm is None or not confirm(preview):
         return {"speak": "Cancelled.", "preview": preview, "confirmed": False}
@@ -244,11 +320,16 @@ def _token_for(tsym):
     return None
 
 
-def _report(result, did, value):
+def _report(result, did, value, segment="options"):
     if result.get("status") == "REJECTED":
         return {"speak": f"Rejected. {result.get('reason','')}", "data": result}
-    safety.record(value)
     outcome = result.get("outcome", {})
+    # The broker accepting an order is not the exchange taking it. Only
+    # count what actually reached the market against the daily allowance.
+    if outcome.get("status") in ("REJECTED", "CANCELED"):
+        return {"speak": f"Rejected. {outcome.get('reason') or ''}".strip(),
+                "data": result}
+    safety.record(value, segment)
     if outcome.get("status") == "COMPLETE":
         return {"speak": f"Done, {did} at {outcome.get('avg_fill_price')}.",
                 "data": result, "confirmed": True}

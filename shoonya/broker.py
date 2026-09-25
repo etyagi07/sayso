@@ -110,12 +110,18 @@ def order(side, spoken_name, quantity, price=None, exchange="NSE",
     if "error" in sym:
         return sym
 
-    q = api().get_quotes(exchange=exchange, token=sym["token"]) or {}
+    q = quote_checked(exchange, sym["token"], expect_tsym=sym["tsym"]) or {}
     low, high = _f(q.get("lc")), _f(q.get("uc"))
     tick = _f(q.get("ti")) or 0.05
 
-    price_type = "MKT" if price is None else "LMT"
-    if price is not None:
+    # Shoonya rejects MKT outright, so "at market" is a limit priced
+    # through the touch. There is no order type here other than LMT.
+    price_type = "LMT"
+    if price is None:
+        price = marketable_price(side, quote_view(q))
+        if price is None:
+            return {"error": f"No usable price for {sym['tsym']}"}
+    else:
         # The exchange rejects anything outside the daily circuit band, and
         # anything off the tick grid. Catch both before burning an order.
         price = round(round(float(price) / tick) * tick, 2)
@@ -319,6 +325,16 @@ def option_contract(option_type, symbol="NIFTY", strike=None, expiry=None):
         "spot": _f(q.get("sptprc")), "oi": q.get("oi"),
         "lower_circuit": _f(q.get("lc")), "upper_circuit": _f(q.get("uc")),
         "strike_adjusted_from": c.get("strike_adjusted_from"),
+    }
+
+
+def quote_view(q):
+    """Normalise a raw quote into the fields pricing needs."""
+    return {
+        "tick": _f(q.get("ti")) or 0.05,
+        "bid": _f(q.get("bp1")), "ask": _f(q.get("sp1")),
+        "ltp": _f(q.get("lp")),
+        "lower_circuit": _f(q.get("lc")), "upper_circuit": _f(q.get("uc")),
     }
 
 

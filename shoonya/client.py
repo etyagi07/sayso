@@ -53,9 +53,14 @@ class Shoonya(NorenApi):
         pasted = input("2. Paste the redirect URL (or just the code): ").strip()
         code = _extract_code(pasted)
 
-        result = self.getAccessToken(code, self.secret_code, self.client_id, self.user_id)
+        result, detail = _exchange(self, code)
         if not result:
-            raise RuntimeError("Token exchange failed - see the response logged above.")
+            raise SystemExit(
+                f"Token exchange failed for code {code!r}.\n"
+                f"  Broker said: {detail}\n"
+                f"  Auth codes are single-use and expire in minutes - "
+                f"log in again for a fresh one."
+            )
 
         access_token, uid, refresh_token, actid = result
         session = {
@@ -89,6 +94,37 @@ def connect(interactive=True):
     return api
 
 
+def _exchange(api, code):
+    """Exchange the code, capturing the broker's reply on failure.
+
+    The SDK logs the response at DEBUG and returns None, so a failure
+    otherwise gives you nothing to act on.
+    """
+    import logging
+
+    records = []
+
+    class _Capture(logging.Handler):
+        def emit(self, record):
+            records.append(record.getMessage())
+
+    logger = logging.getLogger("NorenRestApiPy.NorenApi")
+    handler = _Capture()
+    previous = logger.level
+    logger.addHandler(handler)
+    logger.setLevel(logging.DEBUG)
+    try:
+        result = api.getAccessToken(code, api.secret_code,
+                                    api.client_id, api.user_id)
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(previous)
+
+    detail = next((r for r in reversed(records)
+                   if "emsg" in r or "Error" in r), None)
+    return result, detail or (records[-1] if records else "no response logged")
+
+
 def _session_alive(api):
     """A cheap authenticated call; anything but a clean Ok means re-login.
 
@@ -113,9 +149,18 @@ def _env(name):
 
 
 def _extract_code(pasted):
+    """Pull the auth code out of whatever the browser gave you.
+
+    Accepts the full redirect URL, a bare `code=...` fragment, or the code
+    on its own - people paste all three, and the difference is invisible
+    until the exchange fails with an unhelpful error.
+    """
+    pasted = pasted.strip().strip('"\'')
     if pasted.startswith("http"):
         params = parse_qs(urlparse(pasted).query)
         if "code" not in params:
             raise SystemExit(f"No `code` param in that URL: {pasted}")
         return params["code"][0]
+    if "code=" in pasted:
+        return pasted.split("code=", 1)[1].split("&")[0]
     return pasted

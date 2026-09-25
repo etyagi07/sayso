@@ -8,8 +8,9 @@ this later behind the same parse() signature.
 
 import re
 
-from voice import numbers
+from voice import numbers, strikes
 from voice.aliases import canonical
+from voice.fuzzy import normalise
 
 WORD_NUMBERS = {
     "zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
@@ -39,7 +40,9 @@ def _number(text):
 
 def parse(transcript):
     """-> dict with 'intent' and whatever fields that intent carries."""
-    t = " ".join(transcript.lower().split())
+    # Repair recogniser near-misses and collapse synonyms before any
+    # pattern matching, so the rules below only see canonical vocabulary.
+    t = normalise(transcript)
     # Whisper punctuates freely: "BUY 10 YESBANK." must not search "yesbank."
     # But a decimal point inside a price is data, not punctuation - only
     # strip marks that are NOT followed by a digit, so 23.20 survives.
@@ -74,17 +77,12 @@ def parse(transcript):
         if is_exit:
             return {"intent": "option_exit", "option_type": opt}
         if is_buy:
-            lots = None
-            idx = next(i for i, w in enumerate(words_all) if w in OPTION_WORDS)
-            # Walk back from the option word to find the number that ends
-            # right before it, so "buy two calls" reads 2 and "buy calls"
-            # reads nothing.
-            for start in range(max(0, idx - 2), idx):
-                value, used = numbers.parse(words_all[start:idx])
-                if value is not None and start + used == idx:
-                    lots = value
-                    break
-            return {"intent": "option_buy", "option_type": opt, "lots": lots}
+            # Hand every number in the utterance to the caller. Telling a
+            # strike from a quantity needs the live strike ladder, which
+            # lives where market data does - not in the parser.
+            spans = [span for _, _, span in strikes.number_spans(words_all)]
+            return {"intent": "option_buy", "option_type": opt,
+                    "lots": None, "number_spans": spans}
         if is_sell:
             # Selling to open is unlimited-risk and sounds too much like
             # "exit". Refuse rather than guess which was meant.
