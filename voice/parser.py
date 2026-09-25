@@ -158,9 +158,12 @@ def _parse_one(transcript):
 
     # --- one-word answers to a question the agent asked --------------------
     tokens = [w for w in t.split() if w not in ANSWER_FILLER]
-    if len(tokens) == 1 and tokens[0] in INDEX_WORDS:
+    # Whisper often repeats a short answer - "Sensex. Sensex." - so an
+    # answer is one distinct word, however many times it came through.
+    distinct = set(tokens)
+    if len(distinct) == 1 and tokens[0] in INDEX_WORDS:
         return {"intent": "index_answer", "underlying": INDEX_WORDS[tokens[0]]}
-    if len(tokens) == 1 and tokens[0] in PRODUCT_WORDS:
+    if len(distinct) == 1 and tokens[0] in PRODUCT_WORDS:
         return {"intent": "product_answer", "product": PRODUCT_WORDS[tokens[0]]}
     # "one" is both padding ("the nifty one") and a digit ("two three one
     # zero zero"), so number answers keep every word that reads as a number.
@@ -228,7 +231,7 @@ def _parse_one(transcript):
 
     # "what is yesbank at" / "price of yesbank" / "yesbank quote"
     m = re.search(r"(?:price of|quote for|quote|what'?s|what is|how much is)\s+([a-z0-9 ]+?)"
-                  r"(?:\s+(?:at|trading|going|doing|now))?$", t)
+                  r"(?:\s+(?:at|act|add|trading|going|doing|now))?$", t)
     if m:
         return {"intent": "quote", "name": canonical(m.group(1).strip())}
 

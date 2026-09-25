@@ -421,6 +421,25 @@ def test_exit_keeps_the_positions_product():
         assert f.sent[0]["product"] == "I"
 
 
+# --- from the first real spoken session -----------------------------------
+
+def test_a_repeated_answer_still_answers():
+    # Whisper heard "Sensex" as "Sensex. Sensex." - the answer was not
+    # recognised and the pending order was lost.
+    import voice.parser as parser
+    assert parser.parse("Sensex. Sensex.")["intent"] == "index_answer"
+    assert parser.parse("intraday intraday")["intent"] == "product_answer"
+    assert parser.parse("sensex nifty")["intent"] != "index_answer"
+
+
+def test_a_stray_trailing_word_does_not_lose_the_company():
+    # "at" came through as "Act": "what is hdfc life act".
+    from voice import stocks
+    assert stocks.resolve("hdfc life act")["symbol"] == "HDFCLIFE"
+    assert "ambiguous" in stocks.resolve("hdfc act")
+    assert stocks.resolve("idea act") is None
+
+
 if __name__ == "__main__":
     passed = failed = 0
     for name, fn in sorted(globals().items()):

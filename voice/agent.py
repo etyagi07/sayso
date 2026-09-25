@@ -136,15 +136,16 @@ def _handle(transcript, confirm):
         if not q:
             return {"speak": f"I couldn't get a reliable price for "
                              f"{stock['company']}.", "blocked": True}
-        q = {"symbol": stock["tsym"], "ltp": b._f(q.get("lp")),
+        q = {"symbol": stock["tsym"], "company": stock["company"],
+             "ltp": b._f(q.get("lp")),
              "prev_close": b._f(q.get("c")), "change_pct": b._f(q.get("pc"))}
         # change_pct is absent for some instruments - compute from prev close.
         pct = q.get("change_pct")
         if pct is None and q.get("prev_close"):
             pct = (q["ltp"] - q["prev_close"]) / q["prev_close"] * 100
         move = f", {pct:+.2f} percent" if pct is not None else ""
-        return {"speak": f"{q['symbol'].replace('-EQ','')} is at "
-                         f"{q['ltp']:.2f}{move}.", "data": q}
+        name = q.get("company") or q["symbol"].replace("-EQ", "")
+        return {"speak": f"{name} is at {q['ltp']:.2f}{move}.", "data": q}
 
     if kind in ("option_buy", "option_exit", "option_quote", "option_refused"):
         return _handle_option(intent, confirm)
