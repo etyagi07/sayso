@@ -128,7 +128,18 @@ options: NIFTY 10 lots · BANKNIFTY 3 lots · SENSEX 10 lots
 ```
 
 Press **Enter**, wait for **RECORDING**, speak, then pause. It stops by
-itself. Press `t` instead to type a command.
+itself. Press `t` instead to type a command. If it is still talking when
+you press Enter, it stops at once so you can speak.
+
+Every result starts with a sound, so you can keep your eyes on the chart:
+**Glass** filled, **Ping** part filled, **Tink** waiting to fill, **Basso**
+rejected, **Sosumi** unknown (check your order book), **Pop** it's asking
+you something, **Funk** it didn't do anything. To hear them all once, each
+followed by its meaning:
+
+```bash
+.venv/bin/python -m voice.speak
+```
 
 Start with things that can't trade:
 

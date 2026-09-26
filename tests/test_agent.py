@@ -590,6 +590,18 @@ def test_a_cancelled_order_is_called_cancelled():
         assert "cancel" in r["speak"].lower(), r["speak"]
         assert orders_counted() == 0
 
+
+def test_nothing_done_is_always_flagged():
+    # The flag is what plays the "nothing sent" sound. Without it, a
+    # misheard command was followed by silence - indistinguishable, eyes on
+    # the chart, from an order still in flight.
+    with Fake() as f:
+        for said in ("the weather is nice", "sell my infosys", "exit call",
+                     "buy yes bank sell infosys"):
+            r = agent.handle(said, YES)
+            assert r.get("blocked") or r.get("outcome"), (said, r)
+        assert not f.sent
+
 if __name__ == "__main__":
     passed = failed = 0
     for name, fn in sorted(globals().items()):

@@ -107,7 +107,7 @@ def _handle(transcript, confirm):
 
     if kind == "unknown":
         return {"speak": "Sorry, I didn't catch an instruction in that.",
-                "intent": intent}
+                "intent": intent, "blocked": True}
     if kind == "funds":
         f = b.funds()
         return {"speak": f"You have {f['available']:.2f} rupees available.",
@@ -157,7 +157,8 @@ def _handle(transcript, confirm):
         return _handle_option(intent, confirm)
 
     if kind != "order":
-        return {"speak": "I'm not sure what to do with that.", "intent": intent}
+        return {"speak": "I'm not sure what to do with that.", "intent": intent,
+                "blocked": True}
 
     # --- equity order -----------------------------------------------------
     return _equity_order(intent, confirm)
@@ -217,7 +218,8 @@ def _equity_order(intent, confirm):
         position = next((p for p in b.positions()
                          if p["symbol"] == tsym and p["qty"] > 0), None)
         if position is None:
-            return {"speak": f"You don't hold any {company} to sell."}
+            return {"speak": f"You don't hold any {company} to sell.",
+                    "blocked": True}
         held = position["qty"]
         if quantity is None:
             quantity = held
@@ -486,7 +488,8 @@ def _exit_option(intent, confirm):
 
     where = f"{underlyings.get(name).spoken} " if name else ""
     if not held:
-        return {"speak": f"You have no open {where}{word} position."}
+        return {"speak": f"You have no open {where}{word} position.",
+                "blocked": True}
 
     # Numbers said with an exit: a strike, a number of lots, or both - read
     # the same way as a buy, but against the strikes actually held, so

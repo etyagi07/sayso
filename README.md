@@ -48,10 +48,13 @@ Speech recognition runs locally via Whisper; no audio leaves your machine.
 
 ![Buying and exiting a Nifty call by voice](docs/options-demo.png)
 
-*"Buy call two three one five zero" — no symbol, no expiry, no price. It
-reads the live Nifty level, picks the nearest weekly expiry, resolves
-strike 23150 against the listed ladder, and prices through the spread.
-"Exit call" closes the whole position and reports the P&L first.*
+*From the live session on 25 September 2026, when Nifty was the only
+index. "Buy call two three one five zero" — no symbol, no expiry, no
+price: it read the live Nifty level, picked the nearest weekly expiry,
+resolved strike 23150 against the listed ladder, and priced through the
+spread. "Exit call" closed the whole position and showed the P&L first.
+Today you name the index — "buy Nifty call two three one five zero" — or
+it asks which one, and the replies are worded a little differently.*
 
 Two complete round trips on 25 September 2026, both closed within minutes:
 
@@ -218,12 +221,28 @@ bounded worst case. Press `p` at the confirmation to set your own price.
 
 ## Spoken readback
 
-Every preview is read out before you press `y`, and every outcome after,
-with a distinct sound for filled, part filled, resting and rejected. A
-resting order is followed for five minutes and announced when it fills.
+Every preview is read out before you press `y`, and every result after.
+Each kind of result has its own sound, played before the words, so you
+know what happened without looking away from the chart:
 
-The app never listens while it is speaking, so it cannot hear its own
-readback as a command. It uses the operating system's own voice — an Indian
+| Sound (macOS) | Means |
+|---|---|
+| Glass | filled |
+| Ping | part filled |
+| Tink | placed, waiting to fill |
+| Basso | rejected by the broker |
+| Sosumi | outcome unknown — check your order book |
+| Pop | it's asking you something |
+| Funk | it didn't understand or refused — nothing was sent |
+
+Hear them all, each followed by its meaning, with
+`.venv/bin/python -m voice.speak`. Windows has only five system sounds,
+so some share one there. A resting
+order is followed for five minutes and announced when it fills.
+
+Pressing Enter to talk stops any speech at once and opens the microphone —
+push-to-talk, like a radio. Nothing is spoken while it records, so it
+cannot hear its own readback as a command. It uses the operating system's own voice — an Indian
 English one on macOS when installed — and needs nothing extra. Turn it off
 with `"speak": false` in `config.json`.
 

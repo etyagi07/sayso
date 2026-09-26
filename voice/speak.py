@@ -2,10 +2,10 @@
 
 Two guarantees shape this module:
 
-- It never talks over the microphone. Recording waits until speech has
-  finished, and anything announced while recording waits until it stops.
-  Otherwise the app's own readback - "buy one lot of the Nifty call" - could
-  be heard as a command.
+- It never talks over the microphone. Pressing to talk stops any speech or
+  sound first - push-to-talk, the way a radio works - and anything
+  announced while recording waits until it stops. Otherwise the app's own
+  readback - "buy one lot of the Nifty call" - could be heard as a command.
 - It never blocks the confirmation screen. Speech runs on its own thread;
   the box appears at once and the voice reads it out alongside.
 
@@ -26,19 +26,23 @@ from voice import config
 
 SYSTEM = platform.system()
 
-# Outcome -> sound. Distinct enough to tell apart without listening to words.
+# Outcome -> sound. One sound per meaning, so each can be told apart
+# without listening to the words.
 SOUNDS = {
     "Darwin": {
-        "filled": "/System/Library/Sounds/Glass.aiff",
-        "partial": "/System/Library/Sounds/Tink.aiff",
-        "resting": "/System/Library/Sounds/Tink.aiff",
-        "rejected": "/System/Library/Sounds/Basso.aiff",
-        "unknown": "/System/Library/Sounds/Sosumi.aiff",
-        "question": "/System/Library/Sounds/Pop.aiff",
+        "filled": "/System/Library/Sounds/Glass.aiff",     # bright - done
+        "partial": "/System/Library/Sounds/Ping.aiff",     # some of it
+        "resting": "/System/Library/Sounds/Tink.aiff",     # waiting
+        "rejected": "/System/Library/Sounds/Basso.aiff",   # broker said no
+        "unknown": "/System/Library/Sounds/Sosumi.aiff",   # go and look
+        "question": "/System/Library/Sounds/Pop.aiff",     # answer me
+        "blocked": "/System/Library/Sounds/Funk.aiff",     # nothing sent
     },
     "Windows": {
         "filled": "Asterisk", "partial": "Exclamation", "resting": "Exclamation",
         "rejected": "Hand", "unknown": "Hand", "question": "Question",
+        "blocked": "Beep",
+        # Windows has five system sounds, so some are shared here.
     },
 }
 
@@ -53,7 +57,8 @@ _idle.set()
 _mic_open = threading.Event()
 _worker = None
 _voice = None
-_current = None           # the speech process playing now, if any
+_current = None           # the speech or sound process playing now, if any
+_running = False          # the worker is part-way through an item
 _lock = threading.Lock()
 
 
@@ -134,12 +139,14 @@ def _play(outcome):
     sound = SOUNDS.get(SYSTEM, {}).get(outcome)
     if not sound:
         return
+    # Through the same stoppable path as speech: a sound that cannot be
+    # stopped is a sound the microphone can open over.
     if SYSTEM == "Darwin":
-        subprocess.run(["afplay", sound], timeout=5)
+        _speak_process(["afplay", sound])
     elif SYSTEM == "Windows":
-        subprocess.run(["powershell", "-NoProfile", "-Command",
+        _speak_process(["powershell", "-NoProfile", "-Command",
                         f"[System.Media.SystemSounds]::{sound}.Play(); "
-                        f"Start-Sleep -Milliseconds 400"], timeout=5)
+                        f"Start-Sleep -Milliseconds 400"])
 
 
 def _say(text):
@@ -160,33 +167,52 @@ def _say(text):
     _speak_process(cmd)
 
 
+def _spawn(cmd):
+    return subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL)
+
+
 def _speak_process(cmd):
-    """Run a speech command so that interrupt() can cut it short."""
+    """Run a speech or sound command so that interrupt() can cut it short.
+
+    Starting it and opening the microphone both happen under the lock, so
+    one can never slip in just after the other has checked.
+    """
     global _current
-    with _lock:
-        _current = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
-                                    stderr=subprocess.DEVNULL)
+    while True:
+        with _lock:
+            if not _mic_open.is_set():
+                proc = _current = _spawn(cmd)
+                break
+        time.sleep(0.05)
     try:
-        _current.wait(timeout=60)
+        proc.wait(timeout=60)
     except subprocess.TimeoutExpired:
-        _current.kill()
+        proc.kill()
     finally:
         with _lock:
             _current = None
 
 
 def _loop():
+    global _running
     while True:
         item = _queue.get()
         # Anything announced while the user is recording waits until they
         # finish, so it can never end up in their command.
         while _mic_open.is_set():
             time.sleep(0.05)
-        _idle.clear()
-        _run(item)
-        if _queue.empty():
-            _idle.set()
-        _queue.task_done()
+        with _lock:
+            _running = True
+            _idle.clear()
+        try:
+            _run(item)
+        finally:
+            with _lock:
+                _running = False
+                if _queue.empty():
+                    _idle.set()
+            _queue.task_done()
 
 
 def _start():
@@ -216,11 +242,18 @@ def sound(outcome):
 
 
 def announce(result):
-    """Speak an agent result, with its outcome sound first."""
+    """Speak an agent result, with its sound first.
+
+    Every result that matters gets a sound: what happened to an order, a
+    question back, or a refusal - so "nothing was sent" can be heard
+    without listening to why.
+    """
     if result.get("outcome"):
         sound(result["outcome"])
-    elif result.get("needs_answer"):
+    elif result.get("needs_answer") or result.get("needs_clarification"):
         sound("question")
+    elif result.get("blocked"):
+        sound("blocked")
     say(result.get("speak"))
 
 
@@ -237,29 +270,73 @@ def interrupt():
         except queue.Empty:
             break
     with _lock:
-        if _current is not None:
-            try:
-                _current.terminate()
-            except OSError:
-                pass
-    if _queue.empty():
-        _idle.set()
+        _stop_current()
+        # Quiet only once the worker has actually finished what it was
+        # playing - it reports that itself. Saying so here, early, is what
+        # once let the microphone open over a sound.
+        if not _running and _queue.empty():
+            _idle.set()
 
 
-def wait_until_quiet(timeout=30):
-    """Block until nothing is being spoken. Call before opening the mic."""
+def _stop_current():
+    """Stop whatever is playing. Call with the lock held."""
+    if _current is not None:
+        try:
+            _current.terminate()
+        except OSError:
+            pass
+
+
+def wait_until_quiet(timeout=None):
+    """Block until nothing is being spoken. True if it went quiet."""
     if _worker is None:
-        return
-    _idle.wait(timeout)
+        return True
+    return _idle.wait(timeout)
 
 
 class listening:
-    """Context manager: hold announcements while the microphone is open."""
+    """Context manager: push to talk.
+
+    Stops any speech or sound, then opens the microphone, and holds new
+    announcements until it closes. Pressing to talk means "I'm talking
+    now": waiting for a long readback to finish left people talking to a
+    closed mic, and the old 30-second give-up opened it mid-sentence.
+    """
 
     def __enter__(self):
-        wait_until_quiet()
-        _mic_open.set()
+        interrupt()
+        # Only what was playing is left, and it was just stopped; the
+        # bound is for a process that ignores being stopped.
+        wait_until_quiet(2)
+        with _lock:
+            _mic_open.set()
+            _stop_current()
         return self
 
     def __exit__(self, *exc):
         _mic_open.clear()
+
+
+MEANINGS = [("filled", "Filled."), ("partial", "Part filled."),
+            ("resting", "Placed, waiting to fill."),
+            ("rejected", "Rejected by the broker."),
+            ("unknown", "Outcome unknown. Check your order book."),
+            ("question", "I'm asking you something."),
+            ("blocked", "I didn't do anything.")]
+
+
+def tour():
+    """Play every sound with its meaning - learn them before trading."""
+    if not enabled():
+        print("Speech is off or unavailable on this machine.")
+        return
+    for outcome, meaning in MEANINGS:
+        print(f"  {outcome:9} {meaning}")
+        sound(outcome)
+        say(meaning)
+        wait_until_quiet(15)
+        time.sleep(0.4)
+
+
+if __name__ == "__main__":
+    tour()
