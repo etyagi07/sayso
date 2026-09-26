@@ -60,7 +60,8 @@ def main():
         # An order that is still working gets followed, so its fill is
         # announced whenever it lands.
         data = result.get("data") or {}
-        if result.get("outcome") in ("resting", "partial") and data.get("order_no"):
+        if (result.get("outcome") in ("resting", "partial")
+                and not result.get("final") and data.get("order_no")):
             what = friendly(data["symbol"]) if data.get("symbol") else "Your order"
             watch.follow(data["order_no"], what)
 

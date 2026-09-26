@@ -23,6 +23,50 @@ def _is_numeric(token):
     return token.replace(".", "", 1).isdigit()
 
 
+_DIGITISH = set(numbers.ONES) | set(numbers.TEENS)
+
+
+def _additive(part):
+    """Can this run be read by adding its words up, as numbers.parse does?
+
+    "twenty three" and "one hundred and five" can. "zero five" and "two
+    three" cannot - they are digits read out one at a time, and summing
+    them invents a number: "twenty three zero five zero" became 23,500.
+    """
+    zeros = {"zero", "oh", "o"}
+    if len(part) > 1 and any(w in zeros for w in part):
+        return False
+    for prev, word in zip(part, part[1:]):
+        if prev in _DIGITISH and (word in _DIGITISH or word in numbers.TENS):
+            return False
+        if prev in numbers.TENS and word in numbers.TENS:
+            return False
+    return True
+
+
+def _read(part):
+    """numbers.parse, only when the whole run reads as one added-up number."""
+    if not _additive(part):
+        return None
+    value, used = numbers.parse(part)
+    if value is None or used != len(part):
+        return None
+    return value
+
+
+def _digits(part):
+    """"zero five zero" -> "050"; None unless every word is a single digit."""
+    out = []
+    for tok in part:
+        if tok.isdigit():
+            out.append(tok)
+        elif tok in numbers.ONES:
+            out.append(str(numbers.ONES[tok]))
+        else:
+            return None
+    return "".join(out)
+
+
 def number_spans(tokens):
     """Maximal runs of number words/digits, as (start, end, tokens)."""
     spans, i = [], 0
@@ -57,24 +101,15 @@ def candidates(span):
     out = set()
 
     # Whole-span literal reading: "twenty three fifty" -> 2350
-    value, used = numbers.parse(span)
-    if value is not None and used == len(span) and float(value).is_integer():
+    value = _read(span)
+    if value is not None and float(value).is_integer():
         out.add(int(value))
 
     # Digit-by-digit: "two three five zero" -> "2350". People read
     # strikes out as digits, and the thousands/tens split of that string
     # is what they mean - 23|50 is 23050.
-    digit_tokens = []
-    for tok in span:
-        if tok.isdigit():
-            digit_tokens.append(tok)
-        elif tok in numbers.ONES:
-            digit_tokens.append(str(numbers.ONES[tok]))
-        else:
-            digit_tokens = None
-            break
-    if digit_tokens:
-        joined = "".join(digit_tokens)
+    joined = _digits(span)
+    if joined:
         if joined.isdigit():
             out.add(int(joined))
             for cut in range(1, len(joined)):
@@ -95,9 +130,25 @@ def candidates(span):
     # Split into parts and recombine the way traders actually speak.
     for cut in range(1, len(span)):
         left, right = span[:cut], span[cut:]
-        a, ua = numbers.parse(left)
-        b, ub = numbers.parse(right)
-        if a is None or b is None or ua != len(left) or ub != len(right):
+        a = _read(left)
+        # A number, then digits read out: "twenty three | zero five zero"
+        # is 23050, "twenty two | nine five zero" is 22950.
+        tail = _digits(right)
+        if a is not None and float(a).is_integer() and tail:
+            out.add(int(f"{int(a)}{tail}"))
+
+        # Three-part forms: "twenty two | nine | fifty" -> 22950. The
+        # middle is one digit word and the tail below 100 - or "one
+        # hundred" splits into 1 and 100 and invents a strike, and "zero
+        # five" summed to 5 made "twenty three zero five zero" 23,500.
+        if (a is not None and float(a).is_integer() and len(right) >= 2
+                and right[0] in numbers.ONES):
+            m, n = numbers.ONES[right[0]], _read(right[1:])
+            if (n is not None and float(n).is_integer()
+                    and 1 <= m <= 9 and int(n) < 100):
+                out.add(int(a) * 1000 + m * 100 + int(n))
+        b = _read(right)
+        if a is None or b is None:
             continue
         if not (float(a).is_integer() and float(b).is_integer()):
             continue
@@ -120,19 +171,6 @@ def candidates(span):
         if len(right) == 1 and right[0] in numbers.SCALES:
             out.add(a * 1000)
 
-        # Three-part forms: "twenty two | nine | fifty" -> 22950. The
-        # middle must be a single digit and the tail below 100, or
-        # "one hundred" gets split into 1 and 100 and invents a strike.
-        for cut2 in range(1, len(right)):
-            m, um = numbers.parse(right[:cut2])
-            n, un = numbers.parse(right[cut2:])
-            if (m is None or n is None or um != cut2
-                    or un != len(right) - cut2):
-                continue
-            if not (float(m).is_integer() and float(n).is_integer()):
-                continue
-            if 1 <= int(m) <= 9 and int(n) < 100:
-                out.add(a * 1000 + int(m) * 100 + int(n))
 
     return {v for v in out if v > 0}
 
@@ -190,9 +228,9 @@ def read_order(spans, ladder, spot, band=600, max_lots=999):
         splits = set()
         for cut in range(1, len(span)):
             head, tail = span[:cut], span[cut:]
-            qty, used_q = numbers.parse(head)
+            qty = _read(head)
             found, _ = resolve(tail, ladder, spot, band)
-            if (qty is not None and used_q == len(head) and found is not None
+            if (qty is not None and found is not None
                     and float(qty).is_integer() and 1 <= qty <= max_lots):
                 splits.add((int(qty), found))
 
@@ -214,8 +252,8 @@ def read_order(spans, ladder, spot, band=600, max_lots=999):
         # a long run like "two three five zero" is someone reading a
         # strike out digit by digit, and summing it to 10 lots would build
         # a huge order from a strike that simply was not recognised.
-        value, used = numbers.parse(span)
-        if (len(span) <= 2 and value is not None and used == len(span)
+        value = _read(span)
+        if (len(span) <= 2 and value is not None
                 and float(value).is_integer() and 1 <= value <= max_lots):
             if lots is not None:
                 return None, None, "I heard two quantities. Say one."

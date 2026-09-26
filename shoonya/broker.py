@@ -72,9 +72,11 @@ def _raw_post(path, values):
     try:
         return res.json()
     except ValueError:
+        # A gateway page (502, 504) is not the broker's answer - the
+        # request may well have been acted on behind it.
         return {"stat": "Not_Ok",
                 "emsg": f"HTTP {res.status_code}, non-JSON body: "
-                        f"{res.text[:300]!r}"}
+                        f"{res.text[:300]!r}", "_uncertain": True}
 
 
 def _is_empty(res):
@@ -315,27 +317,30 @@ def place(side, tsym, quantity, price, exchange, product):
         out["order_no"] = res["norenordno"]
         return out
 
-    if not (isinstance(res, dict) and res.get("_network")):
+    refused = (isinstance(res, dict) and res.get("stat") == "Not_Ok"
+               and res.get("emsg") and not res.get("_network")
+               and not res.get("_uncertain"))
+    if refused:
         out["status"] = "REJECTED"
-        out["reason"] = ((res or {}).get("emsg")
-                         or f"No order number. Response: {res}")
+        out["reason"] = res["emsg"]
         return out
 
-    # The request went out but no answer came back. The broker may have the
-    # order. Reporting REJECTED here invites a retry and a double position,
-    # so look for it before saying anything.
-    found = _find_by_tag(tag, tsym=tsym, side=side, quantity=quantity)
+    # No clear answer: the reply was lost, garbled, or said Ok without an
+    # order number. The broker may have the order. Reporting REJECTED here
+    # invites a retry and a double position, so look for it first.
+    found = _find_by_tag(tag)
     if found:
         out["status"] = "ACCEPTED"
         out["order_no"] = found
         out["reconciled"] = True
     else:
         out["status"] = "UNKNOWN"
-        out["reason"] = res.get("emsg")
+        out["reason"] = (res.get("emsg") if isinstance(res, dict)
+                         else f"Unexpected reply: {res!r}"[:300])
     return out
 
 
-def _find_by_tag(tag, tsym=None, side=None, quantity=None, tries=3):
+def _find_by_tag(tag, tries=3):
     """Find an order we sent, when its placement reply was lost."""
     for attempt in range(tries):
         if attempt:
@@ -347,12 +352,9 @@ def _find_by_tag(tag, tsym=None, side=None, quantity=None, tries=3):
         for o in book:
             if o.get("remarks") == tag:
                 return o.get("norenordno")
-        # Some books omit remarks - fall back to a close match on the
-        # newest order, which is at least as strict as a human checking.
-        for o in book[:3]:
-            if (o.get("tsym") == tsym and o.get("trantype") == side
-                    and str(o.get("qty")) == str(int(quantity))):
-                return o.get("norenordno")
+        # Only ever by tag. Matching on symbol, side and size claimed an
+        # older identical order as this one - announcing a fill that never
+        # happened. Not found is reported as unknown, which is the truth.
     return None
 
 

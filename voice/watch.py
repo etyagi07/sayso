@@ -31,12 +31,20 @@ def _watch(order_no, what, every, limit):
         state = b.wait_for_outcome(order_no, timeout=0)
         status = state.get("status")
         filled = state.get("filled") or 0
+        avg = state.get("avg_fill_price")
+        at = f" at {avg:.2f}" if isinstance(avg, (int, float)) else ""
         if status == "COMPLETE":
-            _tell(f"{what} filled at {state.get('avg_fill_price')}.", "filled")
+            _tell(f"{what} filled{at}.", "filled")
             return
         if status in ("REJECTED", "CANCELED"):
-            reason = state.get("reason") or status.lower()
-            _tell(f"{what} was {status.lower()}. {reason}", "rejected")
+            ended = "cancelled" if status == "CANCELED" else "rejected"
+            reason = f" {state['reason']}" if state.get("reason") else ""
+            if filled:
+                # Part of it traded first - that is an open position.
+                _tell(f"{what}: {filled} of {state.get('quantity')} filled"
+                      f"{at}, the rest was {ended}.{reason}", "partial")
+            else:
+                _tell(f"{what} was {ended}.{reason}", "rejected")
             return
         if filled > last_filled:
             last_filled = filled

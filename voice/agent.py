@@ -89,6 +89,12 @@ def _handle(transcript, confirm):
     if kind == "option_ambiguous":
         return {"speak": "I heard both call and put. Say just one.",
                 "blocked": True, "needs_clarification": True}
+    # Speech that could mean two different trades. Each of these was once
+    # read as one of them - and a confident wrong trade is the worst
+    # outcome this program has.
+    if kind in UNCLEAR:
+        return {"speak": UNCLEAR[kind](intent) + " I haven't done anything.",
+                "blocked": True, "needs_clarification": True}
 
     if kind == "index_unsupported":
         return {"speak": f"{intent['index']} options aren't supported. You "
@@ -158,6 +164,20 @@ def _handle(transcript, confirm):
 
 
 PRODUCT_NAMES = {"I": "intraday", "C": "delivery", "M": "margin"}
+
+UNCLEAR = {
+    "side_ambiguous": lambda i: "I heard both buy and sell.",
+    "index_ambiguous": lambda i: (
+        "I heard " + " and ".join(underlyings.get(n).spoken
+                                  for n in i["indices"]) + ". Say one index."),
+    "unclear_correction": lambda i: (
+        "You changed your mind partway through, so say the whole command "
+        "again."),
+    "number_unclear": lambda i: f"I couldn't read the number in \"{i['heard']}\".",
+    "quantity_ambiguous": lambda i: (
+        f"I heard two quantities, {i['quantities'][0]:g} and "
+        f"{i['quantities'][1]:g}. Say one."),
+}
 
 
 def _stock(name):
@@ -308,6 +328,11 @@ def _other_index_hint(spans, name):
     return ""
 
 
+AT_MARKET = ("Options go at market, so I don't take a price - I heard "
+             "\"at {heard}\". Say the strike, or leave it out for "
+             "at-the-money.")
+
+
 def _read_numbers(intent, name):
     """Quantity and strike from the spoken numbers, on this index's ladder."""
     ladder, spot, expiry = _ladder_and_spot(name)
@@ -315,8 +340,17 @@ def _read_numbers(intent, name):
         return None, None, None, {"speak": f"Could not read the "
                                            f"{underlyings.get(name).spoken} "
                                            f"level.", "blocked": True}
-    lots, strike, err = strikes.read_order(intent.get("number_spans"),
-                                           ladder, spot,
+    spans = list(intent.get("number_spans") or [])
+    # "buy call at 23100" names a strike. "buy call at 85" names a price -
+    # which options do not take - and must never be read as 85 lots.
+    for span in intent.get("price_spans") or []:
+        found, _ = strikes.resolve(span, ladder, spot, underlyings.band(name))
+        if found is None:
+            return None, None, None, {
+                "speak": AT_MARKET.format(heard=" ".join(span)),
+                "blocked": True, "needs_clarification": True}
+        spans.append(span)
+    lots, strike, err = strikes.read_order(spans, ladder, spot,
                                            band=underlyings.band(name))
     if err:
         hint = _other_index_hint(intent.get("number_spans"), name)
@@ -454,16 +488,37 @@ def _exit_option(intent, confirm):
     if not held:
         return {"speak": f"You have no open {where}{word} position."}
 
-    spans = intent.get("number_spans") or []
-    if spans:
-        # A strike was named: keep the positions it can mean.
-        wanted = set()
-        for span in spans:
-            wanted |= strikes.candidates(span)
-        held = [(p, c) for p, c in held if c["strike"] in wanted]
-        if not held:
-            return {"speak": f"You don't hold that {where}{word} strike.",
-                    "blocked": True}
+    # Numbers said with an exit: a strike, a number of lots, or both - read
+    # the same way as a buy, but against the strikes actually held, so
+    # nothing can match a position that was not named.
+    spans = list(intent.get("number_spans") or [])
+    at = intent.get("price_spans") or []
+    lots = None
+    if spans or at:
+        held_strikes = {c["strike"] for _, c in held}
+        for span in at:
+            found, _ = strikes.resolve(span, held_strikes, 0, float("inf"))
+            if found is None:
+                return {"speak": AT_MARKET.format(heard=" ".join(span))
+                        .replace("Options go", "Exits go"),
+                        "blocked": True, "needs_clarification": True}
+        lots, strike, err = strikes.read_order(spans + at, held_strikes, 0,
+                                               band=float("inf"))
+        if err:
+            heard = " ".join(" ".join(sp) for sp in spans + at)
+            return {"speak": f"You don't hold a {where}{word} at {heard}.",
+                    "blocked": True, "needs_clarification": True}
+        if strike is not None:
+            held = [(p, c) for p, c in held if c["strike"] == strike]
+
+    if len(held) > 1 and len({(c["underlying"], c["strike"])
+                              for _, c in held}) == 1:
+        # One strike, two expiries. Asking "which strike?" again would
+        # loop forever - the strike is not what differs.
+        listed = " and ".join(friendly(p["symbol"]) for p, _ in held)
+        return {"speak": f"You hold {listed} - the same strike in two "
+                         f"expiries. Exit that one in the broker's app for "
+                         f"now.", "blocked": True}
 
     if len(held) > 1:
         # More than one position answers. Closing one on a guess is what
@@ -480,6 +535,17 @@ def _exit_option(intent, confirm):
 
     pos, c = held[0]
     qty = abs(pos["qty"])
+    lot = c.get("lot") or 1
+    if lots is not None:
+        if lots * lot > qty:
+            have = (f"{qty // lot} lot{'s' if qty // lot != 1 else ''}"
+                    if qty % lot == 0 else f"{qty} units")
+            return {"speak": f"You hold {have} of the "
+                             f"{friendly(pos['symbol'])}. I won't exit more "
+                             f"than you hold.", "blocked": True}
+        qty = lots * lot
+    part = (f"{lots} lot{'s' if lots != 1 else ''} of " if lots is not None
+            and qty < abs(pos["qty"]) else "")
     q = b.quote_checked(c["exchange"], c["token"], expect_tsym=pos["symbol"])
     if not q:
         return {"speak": f"Could not price {friendly(pos['symbol'])} to exit "
@@ -495,6 +561,9 @@ def _exit_option(intent, confirm):
     side = "S" if pos["qty"] > 0 else "B"
     view = b.quote_view(q)
     price = b.marketable_price(side, view)
+    if price is None:
+        return {"speak": f"No usable price for {friendly(pos['symbol'])}.",
+                "blocked": True}
     value = round(qty * price, 2)
     if pnl is None:
         result_words = ""
@@ -508,14 +577,16 @@ def _exit_option(intent, confirm):
         "symbol": pos["symbol"], "quantity": qty, "lots": None,
         "price": price, "value": value, "ltp": ltp, "at_market": True,
         "pnl": pnl, "entry": pos.get("avg_price"),
-        "say": (f"Exit {friendly(pos['symbol'])}, about {value:,.0f} "
-                f"rupees." + result_words),
+        "say": (f"Exit {part}{friendly(pos['symbol'])}, about "
+                f"{value:,.0f} rupees." + result_words),
         "bid": view["bid"], "ask": view["ask"], "tick": view["tick"],
         "lower_circuit": view["lower_circuit"],
         "upper_circuit": view["upper_circuit"],
-        "spoken": (f"exit your {friendly(pos['symbol'])}, {qty} units at "
-                   f"market, about {value:,.0f} rupees. Entry was "
-                   f"{pos['avg_price']:.2f}, now {ltp:.2f}." + result_words),
+        "spoken": (f"exit {part or 'your '}{friendly(pos['symbol'])}, "
+                   f"{qty} units at market, about {value:,.0f} rupees."
+                   + (f" Entry was {pos['avg_price']:.2f}, now {ltp:.2f}."
+                      if pos.get("avg_price") and ltp is not None else "")
+                   + result_words),
     }
     if confirm is None or not confirm(preview):
         return {"speak": "Cancelled.", "preview": preview, "confirmed": False}
@@ -525,7 +596,8 @@ def _exit_option(intent, confirm):
     value = round(qty * price, 2)
     return _execute(side, pos["symbol"], qty, price, exchange=c["exchange"],
                     product=pos.get("prd") or "M",
-                    did=f"exited the {friendly(pos['symbol'])}", value=value,
+                    did=f"exited {part or 'the '}{friendly(pos['symbol'])}",
+                    value=value,
                     opening=False, segment="options")
 
 
@@ -562,24 +634,41 @@ def _execute(side, tsym, quantity, price, exchange, product, did, value,
     state = b.wait_for_outcome(sent["order_no"])
     status = state.get("status")
 
+    filled, total = state.get("filled") or 0, state.get("quantity") or quantity
+    avg = state.get("avg_fill_price")
+    avg = f"{avg:.2f}" if isinstance(avg, (int, float)) else avg
+    at = f" at {avg}" if avg else ""
+
     if status in ("REJECTED", "CANCELED"):
-        reason = state.get("reason") or status.lower()
-        return {"speak": f"Rejected by the exchange. {reason}",
+        ended = "cancelled" if status == "CANCELED" else "rejected"
+        reason = state.get("reason")
+        if filled:
+            # Some of it traded before the rest was stopped. That is a
+            # position, not a rejection - saying "rejected" hides it.
+            if opening:
+                safety.record(round(value * filled / total, 2), segment)
+            return {"speak": f"Part filled: {filled} of {total}{at}. The "
+                             f"rest was {ended}."
+                             + (f" {reason}" if reason else ""),
+                    "outcome": "partial", "final": True, "confirmed": True,
+                    "data": {**sent, "state": state}}
+        if status == "CANCELED":
+            return {"speak": "The order was cancelled before it filled."
+                             + (f" {reason}" if reason else ""),
+                    "outcome": "rejected", "data": {**sent, "state": state}}
+        return {"speak": f"Rejected by the exchange. {reason or ''}".strip(),
                 "outcome": "rejected", "data": {**sent, "state": state}}
 
     # It reached the market. Only opening trades count against the caps.
     if opening:
         safety.record(value, segment)
 
-    filled, total = state.get("filled") or 0, state.get("quantity") or quantity
-    avg = state.get("avg_fill_price")
-    avg = f"{avg:.2f}" if isinstance(avg, (int, float)) else avg
     if status == "COMPLETE":
-        return {"speak": f"Filled. {did[:1].upper()}{did[1:]} at {avg}.",
+        return {"speak": f"Filled. {did[:1].upper()}{did[1:]}{at}.",
                 "outcome": "filled",
                 "confirmed": True, "data": {**sent, "state": state}}
     if filled and filled < total:
-        return {"speak": f"Part filled: {filled} of {total} at {avg}. The "
+        return {"speak": f"Part filled: {filled} of {total}{at}. The "
                          f"rest is still working.",
                 "outcome": "partial", "confirmed": True,
                 "data": {**sent, "state": state}}

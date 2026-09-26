@@ -172,15 +172,8 @@ def resolve(spoken):
     found = {s for c in close for s in by_name[c]}
     if found:
         return one_or_many(found, "close")
-    # 5. A stray word the recogniser tacked on the end - "hdfc life act"
-    #    for "hdfc life at". Drop trailing words and try again. Only ever
-    #    shortens, and ambiguity still asks, so it cannot invent a company.
-    words = n.split()
-    for cut in (1, 2):
-        if len(words) > cut:
-            shorter = resolve(" ".join(words[:-cut]))
-            if shorter is not None:
-                return shorter
+    # Never drop words to force a match: "sbi card" is not SBI, and "sun
+    # tv" is not Sun Pharma. An unknown name is asked about, not guessed.
     return None
 
 

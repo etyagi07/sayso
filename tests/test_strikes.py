@@ -155,6 +155,60 @@ def test_a_lone_and_does_not_hang():
         (0, 4, ["one", "hundred", "and", "five"])]
 
 
+def test_tens_then_digits_is_not_summed():
+    # "twenty three zero five zero" is 23,050. Summing "zero five" to 5
+    # made it 23,500 - a listed strike, so it validated cleanly.
+    assert r("twenty three zero five zero") == 23050
+    assert r("twenty three one zero zero") == 23100
+    assert r("twenty two nine five zero") == 22950
+    assert 23500 not in __import__("voice.strikes").strikes.candidates(
+        "twenty three zero five zero".split())
+
+
+def test_run_of_digit_words_is_not_a_quantity():
+    # "two three" is not five lots.
+    lots, strike, err = o("two three")
+    assert lots is None and err, (lots, strike, err)
+
+
+_ONES = "zero one two three four five six seven eight nine".split()
+_TENS = {2: "twenty", 3: "thirty", 4: "forty", 5: "fifty", 6: "sixty",
+         7: "seventy", 8: "eighty", 9: "ninety"}
+
+
+def _words(n):
+    t, o = divmod(n, 10)
+    return _TENS[t] + ("" if o == 0 else " " + _ONES[o])
+
+
+def _ways_to_say(k):
+    th, rest = divmod(k, 1000)
+    h, r = divmod(rest, 100)
+    out = [str(k), " ".join(_ONES[int(c)] for c in str(k)),
+           _words(th) + " " + " ".join(_ONES[int(c)] for c in f"{rest:03d}")]
+    if rest == 0:
+        out.append(_words(th) + " thousand")
+    elif r == 0:
+        out.append(f"{_words(th)} {_ONES[h]} hundred")
+    elif h:
+        out.append(f"{_words(th)} {_ONES[h]} {_words(r)}")
+    return out
+
+
+def test_no_way_of_saying_a_strike_resolves_to_a_different_one():
+    # Every listed strike, said the common ways, on NIFTY-, BANKNIFTY- and
+    # SENSEX-like ladders. Not resolving is acceptable - it asks. Resolving
+    # to a different listed strike is a real trade in the wrong contract;
+    # before this sweep, nine NIFTY strikes did exactly that.
+    for spot, step in ((25000, 50), (55500, 100), (81000, 100)):
+        band = step * 15
+        ladder = set(range(spot - band, spot + band + 1, step))
+        for k in sorted(ladder):
+            for said in _ways_to_say(k):
+                got, _ = resolve(said.split(), ladder, spot, band)
+                assert got in (None, k), (said, got)
+
+
 def test_no_numbers():
     assert read_order([], LADDER, SPOT) == (None, None, None)
 

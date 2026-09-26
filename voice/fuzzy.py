@@ -16,11 +16,13 @@ import re
 # Canonical word -> the things people and recognisers actually say.
 SYNONYMS = {
     # instruments
-    "call": ["call", "calls", "ce", "kol", "coal", "cal", "caul"],
+    # Not "coal" - Coal India is a stock.
+    "call": ["call", "calls", "ce", "kol", "cal", "caul"],
     "put": ["put", "puts", "pe", "button", "putt", "foot", "boot", "pull"],
-    # actions - open
-    "buy": ["buy", "by", "bye", "purchase", "get", "grab", "take", "long",
-            "acquire", "pick"],
+    # actions - open. Not "get", "take" or "long": "take profit" and "get
+    # me out" are exits, and reading them as buy opens a second position.
+    # "by" and "bye" are only buy as the first word - see normalise().
+    "buy": ["buy", "purchase", "grab", "acquire"],
     # actions - close
     "exit": ["exit", "close", "square", "squareoff", "unwind", "offload",
              "dump", "flatten", "exist", "exits"],
@@ -64,13 +66,16 @@ PHRASES = [
     (r"\bnifty\s*bees?\b", "niftybees"),
     # Supported indices, in the forms speech recognition produces.
     (r"\bbank\s*nifty(?:'s)?\b", "banknifty"),
+    (r"\bnifty\s+bank\b", "banknifty"),
     (r"\bnifty\s+(?:fifty|50)\b", "nifty"),
     (r"\bsense\s*x\b", "sensex"),
     (r"\bsensex'?s\b", "sensex"),
     (r"\bcensus\b", "sensex"),
     (r"\bsquare\s+off\b", "exit"),
-    (r"\bget\s+out\s+of\b", "exit"),
+    (r"\bget\s+(?:me\s+)?out(?:\s+of)?\b", "exit"),
     (r"\bget\s+rid\s+of\b", "exit"),
+    (r"\b(?:take|book)\s+(?:my\s+|the\s+|some\s+)?profits?\b", "exit"),
+    (r"\bthank\s+you\b", "thanks"),
     (r"\bgo\s+long\b", "buy"),
     (r"\bpick\s+up\b", "buy"),
     (r"\byears?\s+bank\b", "yesbank"),
@@ -80,16 +85,45 @@ PHRASES = [
 ]
 
 
+# Said before a command without being part of it.
+LEADING_FILLER = {"ok", "okay", "so", "um", "uh", "hey", "alright", "right",
+                  "well", "hmm", "now", "and", "please"}
+# Whisper ends short clips with a sign-off nobody said - and "bye" read as
+# "buy" turned "sell 10 infosys. bye." into a buy.
+SIGN_OFFS = {"bye", "by", "goodbye", "thanks"}
+
+
+def _stock_words():
+    """Every word in a known company name - never rewritten."""
+    from voice import stocks
+    words = set()
+    for row in stocks.all_stocks().values():
+        for name in row["names"]:
+            words.update(name.split())
+    return words
+
+
 def normalise(text, cutoff=0.82):
     """Rewrite a transcript into canonical vocabulary."""
     t = " ".join(text.lower().split())
     for pattern, repl in PHRASES:
         t = re.sub(pattern, repl, t)
 
+    tokens = t.split()
+    while tokens and tokens[-1].strip(".,!?;:") in SIGN_OFFS:
+        tokens.pop()
+    # "by 10 yes bank" is buy - but only as the opening word, where no
+    # other reading makes sense.
+    first = next((i for i, tok in enumerate(tokens)
+                  if tok.strip(".,!?;:") not in LEADING_FILLER), None)
+    if first is not None and tokens[first].strip(".,!?;:") in ("by", "bye"):
+        tokens[first] = "buy"
+
+    keep = PROTECTED | _stock_words()
     out = []
-    for token in t.split():
+    for token in tokens:
         bare = token.strip(".,!?;:")
-        if not bare or bare in PROTECTED:
+        if not bare or bare in keep:
             out.append(token)
             continue
         if bare in _LOOKUP:
