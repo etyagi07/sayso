@@ -1,6 +1,7 @@
 """Run once per trading day: python -m shoonya.login [--account NAME]
 
-Asks for API credentials first if none are stored for that account.
+Asks for your API credentials, logs in, and keeps only the day's session.
+The credentials themselves are never saved.
 """
 
 from shoonya import profile
@@ -11,4 +12,4 @@ from shoonya.client import Shoonya  # noqa: E402
 
 if __name__ == "__main__":
     print(f"Account: {profile.label()}")
-    Shoonya(ask=True).login_interactive()
+    Shoonya().login_interactive()

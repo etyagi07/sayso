@@ -22,13 +22,13 @@ MODULES = [
 
 # Names other code calls by hand, so a rename or deletion is caught here.
 PUBLIC = {
-    "shoonya.credentials": ["prompt", "ensure", "have_credentials",
-                            "read_env_file", "write_env_file"],
+    "shoonya.credentials": ["ask"],
+    "shoonya.client": ["Shoonya", "connect", "session_user"],
     "shoonya.broker": ["place", "wait_for_outcome", "order_book",
                        "option_contract", "marketable_price",
                        "quote_checked", "positions", "funds",
                        "BrokerError"],
-    "voice.stocks": ["resolve", "add", "remove", "all_stocks", "symbols"],
+    "voice.stocks": ["resolve", "all_stocks", "symbols"],
     "voice.parser": ["parse"],
     "voice.strikes": ["resolve", "read_order", "number_spans"],
     "voice.safety": ["check", "check_option", "record", "status"],
@@ -77,15 +77,13 @@ def test_startup_banner_renders():
     # Regression: renaming a limits field broke the banner in both entry
     # points - the app crashed before it could hear a word. Nothing drew
     # the banner in a test, so it went unnoticed.
+    # Draws the real banner, rather than searching the source for one
+    # spelling of the old field name.
     from voice import safety
-    from voice.cli import limits_line
-    line = limits_line(safety.status())
-    assert "stocks" in line and "/order" in line
-    import inspect, voice.main, voice.cli
-    for mod in (voice.main, voice.cli):
-        src = inspect.getsource(mod)
-        for key in ("allowlist", "market_orders"):
-            assert f"s['{key}']" not in src, f"{mod.__name__} uses {key}"
+    from voice.main import banner
+    text = banner(safety.status())
+    assert "account:" in text and "options:" in text, text
+    assert "stocks" in text and "/order" in text, text
 
 
 def test_public_names_exist():

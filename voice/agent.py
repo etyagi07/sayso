@@ -184,8 +184,8 @@ def _stock(name):
     """A spoken company name -> one stock, or something to say instead."""
     found = stocks.resolve(name or "")
     if found is None:
-        return None, {"speak": f"I don't know {name}. Add it with: python -m "
-                               f"voice.stocks add \"{name}\" SYMBOL",
+        return None, {"speak": f"I don't know {name}. I can trade Nifty 50 "
+                               f"stocks - say the company's name.",
                       "blocked": True}
     if "ambiguous" in found:
         options = [company for _, company in found["ambiguous"]]

@@ -1,7 +1,7 @@
 # Tutorial: from clone to your first voice trade
 
 About 20 minutes, most of it one-time setup. Each step says what you should
-see, so you can tell working from broken. **Nothing up to Step 7 can place
+see, so you can tell working from broken. **Nothing up to Step 6 can place
 an order.**
 
 ---
@@ -31,31 +31,7 @@ a couple of minutes. It ends by listing the next steps.
 
 ---
 
-## Step 2 — Your credentials
-
-```bash
-.venv/bin/python -m shoonya.credentials
-```
-
-It asks for three things:
-
-```
-Client ID:    ABC123_U        ← usually your user ID plus a suffix
-User ID:      ABC123          ← no suffix
-Secret code:                  ← hidden
-```
-
-**The secret code shows nothing as you type or paste — that is normal.**
-Paste it once and press Enter. If paste doesn't seem to work, press Enter on
-an empty line and it offers to show the text instead. If you paste it twice
-by accident, it notices and offers to fix it.
-
-It then asks whether to save them. Saved credentials go in `.env`, readable
-only by you and never committed.
-
----
-
-## Step 3 — Measure your microphone
+## Step 2 — Measure your microphone
 
 ```bash
 .venv/bin/python -m voice.calibrate
@@ -82,7 +58,7 @@ Run it again somewhere quieter.
 
 ---
 
-## Step 4 — Log in
+## Step 3 — Log in
 
 Once per trading day:
 
@@ -90,7 +66,25 @@ Once per trading day:
 .venv/bin/python -m shoonya.login
 ```
 
-Your browser opens Shoonya's login page. Log in there with your password and
+It first asks for your three API values, from your API app registration on
+shoonya.com:
+
+```
+Client ID:    ABC123_U        ← usually your user ID plus a suffix
+User ID:      ABC123          ← no suffix
+Secret code:                  ← hidden
+```
+
+**The secret code shows nothing as you type or paste — that is normal.**
+Paste it once and press Enter. If paste doesn't seem to work, press Enter on
+an empty line and it offers to show the text instead. If you paste it twice
+by accident, it notices and offers to fix it.
+
+**These are never saved.** They are used once for this login and dropped,
+so you type them each trading day. The only thing kept is the day's
+session, which expires on its own, in a file only you can read.
+
+Then your browser opens Shoonya's login page. Log in there with your password and
 OTP — they go to Shoonya, never to this program.
 
 You'll land on a page that says **"This site can't be reached"**. That is
@@ -106,7 +100,7 @@ Logged in as ABC123 (account ABC123). Session cached in .session.json.
 
 ---
 
-## Step 5 — Check everything
+## Step 4 — Check everything
 
 ```bash
 .venv/bin/python -m voice.doctor
@@ -119,7 +113,7 @@ work.
 
 ---
 
-## Step 6 — Talk to it
+## Step 5 — Talk to it
 
 ```bash
 .venv/bin/python -m voice.main
@@ -149,7 +143,7 @@ You'll hear the answers read out as well as see them.
 
 ---
 
-## Step 7 — Your first order
+## Step 6 — Your first order
 
 > From here, pressing `y` sends a **real** order.
 
@@ -230,31 +224,22 @@ seconds, so a half-finished order can't be completed by accident later.
 
 ---
 
-## Adding stocks
+## Which stocks
 
-It knows the Nifty 50. To add another:
-
-```bash
-.venv/bin/python -m voice.stocks add "tata power" TATAPOWER
-```
-
-It checks the symbol with the broker and reads the company name back. See
-the full list with `python -m voice.stocks list`.
-
-If you say a name that could be two companies — "hdfc", "tata", "bajaj" —
-it asks which you mean.
+It knows the Nifty 50, plus Yes Bank for cheap testing. If you say a name
+that could be two companies — "hdfc", "tata", "bajaj" — it asks which you
+mean. Anything else it says it doesn't know, rather than guessing.
 
 ---
 
 ## More than one account
 
 ```bash
-.venv/bin/python -m shoonya.credentials --account work
 .venv/bin/python -m shoonya.login --account work
 .venv/bin/python -m voice.main --account work
 ```
 
-Each account has its own credentials, login and daily limits. The account
+Each account has its own login session and daily limits. The account
 in use is shown at the top when you start.
 
 ---

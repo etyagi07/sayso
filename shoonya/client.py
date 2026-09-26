@@ -47,65 +47,28 @@ ROOT = Path(__file__).resolve().parent.parent
 SESSION_FILE = profile.session_file()
 
 
-def _load_dotenv_force():
-    """Re-read .env, overriding what is already in the environment.
-
-    Used after credentials are entered interactively, so the new values
-    take effect in a process that started without them.
-    """
-    env_file = profile.env_file()
-    if not env_file.exists():
-        return
-    for line in env_file.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        os.environ[key.strip()] = value.strip()
-
-
-def _load_dotenv():
-    """Populate os.environ from .env, without pulling in python-dotenv."""
-    env_file = profile.env_file()
-    if not env_file.exists():
-        return
-    for line in env_file.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        os.environ.setdefault(key.strip(), value.strip())
-
-
-_load_dotenv()
-
-
 class Shoonya(NorenApi):
-    def __init__(self, ask=False):
+    """The SDK client. Holds no credentials - only a session, once attached."""
+
+    def __init__(self):
         super().__init__(host=HOST, websocket=WS)
-        if ask:
-            from shoonya import credentials
-            credentials.ensure()
-            _load_dotenv_force()
-        self.client_id = _env("SHOONYA_CLIENT_ID")
-        self.user_id = _env("SHOONYA_USER_ID")
-        self.secret_code = _env("SHOONYA_SECRET_CODE")
 
     # --- auth -------------------------------------------------------------
 
-    def authorize_url(self):
-        return self.getOAuthURL(AUTHORIZE_URL, self.client_id)
-
     def login_interactive(self, open_browser=True):
-        """Print the authorize URL, take the redirect back, save the session."""
-        url = self.authorize_url()
+        """Ask for credentials, log in, and keep only the day's session."""
+        from shoonya import credentials
+
+        creds = credentials.ask()
+        url = self.getOAuthURL(AUTHORIZE_URL, creds["client_id"])
         print(f"\n1. Open this URL and log in:\n\n   {url}\n")
         if open_browser:
             webbrowser.open(url)
         pasted = input("2. Paste the redirect URL (or just the code): ").strip()
         code = _extract_code(pasted)
 
-        result, detail = _exchange(self, code)
+        result, detail = _exchange(self, code, creds)
+        creds.clear()           # used once; not kept around in memory
         if not result:
             raise SystemExit(
                 f"Token exchange failed for code {code!r}.\n"
@@ -114,15 +77,11 @@ class Shoonya(NorenApi):
                 f"log in again for a fresh one."
             )
 
-        access_token, uid, refresh_token, actid = result
-        session = {
-            "access_token": access_token,
-            "refresh_token": refresh_token,
-            "uid": uid,
-            "actid": actid,
-        }
-        SESSION_FILE.write_text(json.dumps(session, indent=2))
-        SESSION_FILE.chmod(0o600)
+        # The refresh token is dropped: the SDK cannot use it, and anything
+        # not stored cannot leak.
+        access_token, uid, _refresh, actid = result
+        session = {"access_token": access_token, "uid": uid, "actid": actid}
+        _write_private(SESSION_FILE, json.dumps(session, indent=2))
         print(f"\nLogged in as {uid} (account {actid}). Session cached in {SESSION_FILE.name}.")
         return session
 
@@ -146,7 +105,32 @@ def connect(interactive=True):
     return api
 
 
-def _exchange(api, code):
+def _write_private(path, text):
+    """Write a file only its owner can read - from the first byte.
+
+    Writing then chmod-ing leaves a moment where the file has default
+    permissions. Creating it 0600 and renaming it into place does not.
+    """
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+def session_user():
+    """The user ID of the saved session, or None. No network call."""
+    try:
+        return json.loads(SESSION_FILE.read_text()).get("uid")
+    except (OSError, ValueError):
+        return None
+
+
+def _exchange(api, code, creds):
     """Exchange the code, capturing the broker's reply on failure.
 
     The SDK logs the response at DEBUG and returns None, so a failure
@@ -166,8 +150,8 @@ def _exchange(api, code):
     logger.addHandler(handler)
     logger.setLevel(logging.DEBUG)
     try:
-        result = api.getAccessToken(code, api.secret_code,
-                                    api.client_id, api.user_id)
+        result = api.getAccessToken(code, creds["secret"],
+                                    creds["client_id"], creds["user_id"])
     finally:
         logger.removeHandler(handler)
         logger.setLevel(previous)
@@ -191,16 +175,6 @@ def _session_alive(api):
     if not isinstance(res, dict):
         return False
     return res.get("stat") == "Ok"
-
-
-def _env(name):
-    try:
-        return os.environ[name]
-    except KeyError:
-        raise SystemExit(
-            f"Missing {name}.\n"
-            f"  Run: python -m shoonya.credentials"
-        )
 
 
 def _extract_code(pasted):

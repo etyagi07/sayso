@@ -1,15 +1,15 @@
 """Which trading account is in use.
 
-Credentials, the login session and the daily limit counters all belong to
-one account. Keeping them per account means switching is a flag, not
-copying files around - and a session can never leak from one account to
-another.
+The login session and the daily limit counters both belong to one
+account. Keeping them per account means switching is a flag, not copying
+files around - and a session can never leak from one account to another.
+Credentials are not stored at all; they are typed at each login.
 
-    python -m voice.main --account client     -> .env.client
-    python -m voice.main                      -> .env (the default)
+    python -m voice.main --account client     -> .session.client.json
+    python -m voice.main                      -> .session.json (the default)
 
 Must be read before anything else from this project is imported, since
-credentials are loaded at import time. Entry points call from_argv() first.
+file paths are fixed at import time. Entry points call from_argv() first.
 """
 
 import os
@@ -29,10 +29,6 @@ def name():
 def _tag():
     n = name()
     return f".{n}" if n else ""
-
-
-def env_file():
-    return ROOT / f".env{_tag()}"
 
 
 def session_file():

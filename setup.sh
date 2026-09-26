@@ -42,9 +42,8 @@ echo "${G}ok${X} dependencies installed"
 
 echo
 echo "${D}Next steps:${X}"
-echo "  1. ./.venv/bin/python -m shoonya.credentials  ${D}your API credentials${X}"
-echo "  2. ./.venv/bin/python -m voice.calibrate      ${D}measures your microphone${X}"
-echo "  3. ./.venv/bin/python -m shoonya.login        ${D}once per trading day${X}"
-echo "  4. ./.venv/bin/python -m voice.doctor         ${D}checks everything${X}"
-echo "  5. ./.venv/bin/python -m voice.main           ${D}run it${X}"
+echo "  1. ./.venv/bin/python -m voice.calibrate      ${D}measures your microphone${X}"
+echo "  2. ./.venv/bin/python -m shoonya.login        ${D}once per trading day - asks for your API credentials${X}"
+echo "  3. ./.venv/bin/python -m voice.doctor         ${D}checks everything${X}"
+echo "  4. ./.venv/bin/python -m voice.main           ${D}run it${X}"
 echo

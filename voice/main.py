@@ -6,12 +6,11 @@ Press Enter to speak. Whisper runs locally. Orders always require a typed
 `y` on screen before anything is sent - speech proposes, you dispose.
 """
 
-import os
-
 from shoonya import profile
 
 profile.from_argv()
 
+from shoonya.client import session_user  # noqa: E402
 from voice import safety, speak, watch
 from voice.agent import friendly, handle
 from voice.cli import confirm, limits_line
@@ -20,15 +19,22 @@ from voice.listen import listen_once, warm_up
 G, R, Y, DIM, X = "\033[92m", "\033[91m", "\033[93m", "\033[2m", "\033[0m"
 
 
+def banner(s):
+    """The account and limits lines shown at start. Kept apart so it can be
+    drawn in a test - a renamed field once crashed the app right here."""
+    # The ID the session actually belongs to - not a setting that could
+    # name a different account from the one orders will go to.
+    caps = " · ".join(f"{n} {c} lots" for n, c in s["max_lots"].items())
+    return (f"  {Y}account: {session_user() or 'not logged in'} "
+            f"({profile.label()}){X}\n"
+            f"{DIM}  options: {caps}{X}\n" + limits_line(s))
+
+
 def main():
     s = safety.status()
     print(f"\n{DIM}┄┄┄ voice trading ┄┄┄{X}")
-    print(f"  {Y}account: {os.environ.get('SHOONYA_USER_ID', '?')} "
-          f"({profile.label()}){X}")
     warm_up()
-    caps = " · ".join(f"{n} {c} lots" for n, c in s["max_lots"].items())
-    print(f"{DIM}  options: {caps}{X}")
-    print(limits_line(s))
+    print(banner(s))
     print(f"\n{G}● READY{X} {DIM}- press Enter to speak · 't' to type · ctrl-c to quit{X}\n")
 
     while True:

@@ -85,6 +85,30 @@ def test_a_lost_reply_never_claims_an_older_identical_order():
     assert out["status"] == "UNKNOWN", out
 
 
+
+def quoting(replies):
+    """quote_checked, with get_quotes answering from `replies` in turn."""
+    replies = list(replies)
+    saved = b._api
+    b._api = types.SimpleNamespace(
+        get_quotes=lambda exchange, token: replies.pop(0) if replies else None)
+    try:
+        return b.quote_checked("NFO", "73906", expect_tsym="NIFTY29SEP26C23100")
+    finally:
+        b._api = saved
+
+
+NIFTY_INDEX = {"stat": "Ok", "token": "26000", "tsym": "Nifty 50", "lp": "23188"}
+THE_OPTION = {"stat": "Ok", "token": "73906", "tsym": "NIFTY29SEP26C23100",
+              "lp": "106"}
+
+
+def test_a_quote_for_another_instrument_is_thrown_away():
+    # Observed live: asking for an option returned the Nifty index. Priced
+    # off that, an order would be ~200x too large.
+    assert quoting([NIFTY_INDEX, THE_OPTION])["lp"] == "106"
+    assert quoting([NIFTY_INDEX] * 4) is None
+
 if __name__ == "__main__":
     passed = failed = 0
     for name, fn in sorted(globals().items()):

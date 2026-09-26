@@ -127,7 +127,6 @@ powershell -ExecutionPolicy Bypass -File setup.ps1  # Windows
 Then, once per machine:
 
 ```bash
-.venv/bin/python -m shoonya.credentials   # your API credentials
 .venv/bin/python -m voice.calibrate       # measures your microphone
 ```
 
@@ -147,15 +146,18 @@ code is in the address bar; paste it back.
 
 ![The redirect page after login, with the code in the address bar](docs/oauth-redirect.png)
 
-Your password and OTP go to the broker, never to this program. All it ever
-sees is a short-lived, single-use code.
+Login asks for your API credentials — client ID, user ID and secret code —
+each time. **They are never saved**: they are used once to log in and
+dropped. The only thing kept is the day's session, which expires on its own,
+in a file only you can read. Your password and OTP go to the broker, never
+to this program.
 
-**More than one account?** Add `--account NAME` to any command. Each account
-keeps its own credentials, login session and daily limits, and the app shows
-which one is live:
+**More than one account?** Add `--account NAME` to login and to the app.
+Each account keeps its own login session and daily limits, and the app
+shows the ID you are actually logged in as:
 
 ```bash
-.venv/bin/python -m shoonya.credentials --account client
+.venv/bin/python -m shoonya.login --account client
 .venv/bin/python -m voice.main --account client
 ```
 
@@ -201,7 +203,7 @@ said or understood:
 |---|---|
 | Lots per option order | Nifty 10 · Bank Nifty 3 · Sensex 10 |
 | Option orders per day | 10 (opening trades only) |
-| Stocks tradeable | Nifty 50 plus your additions |
+| Stocks tradeable | Nifty 50, plus Yes Bank for testing |
 | Equity order value | ₹15,000 per order, ₹50,000 per day |
 | Selling options to open | refused |
 | Selling more stock than you hold | refused |
@@ -225,18 +227,12 @@ readback as a command. It uses the operating system's own voice — an Indian
 English one on macOS when installed — and needs nothing extra. Turn it off
 with `"speak": false` in `config.json`.
 
-## Your own stocks
+## Stocks
 
-```bash
-.venv/bin/python -m voice.stocks add "tata power" TATAPOWER
-.venv/bin/python -m voice.stocks remove TATAPOWER
-.venv/bin/python -m voice.stocks list
-```
-
-Adding checks the symbol with the broker and reads the company name back.
-Your additions live in `stocks.json`, so updates never overwrite them. The
-built-in list is the Nifty 50 as of the September 2025 rebalance; membership
-changes every six months, so check it.
+The Nifty 50 as of the September 2025 rebalance, plus Yes Bank for cheap
+testing. The list is fixed on purpose: index options are the focus, and a
+short known list can be checked by hand. A name that could be two companies
+is asked about; an unknown one is refused, never guessed.
 
 ## Limitations
 

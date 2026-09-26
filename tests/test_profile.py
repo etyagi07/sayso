@@ -1,5 +1,5 @@
-"""Account selection: each account keeps its own credentials, session and
-daily allowance, so one can never be used with another's login."""
+"""Account selection: each account keeps its own session and daily
+allowance, so one can never be used with another's login."""
 
 import os
 import sys
@@ -25,7 +25,6 @@ def isolated(fn):
 
 @isolated
 def test_default_account_uses_the_plain_files():
-    assert profile.env_file().name == ".env"
     assert profile.session_file().name == ".session.json"
     assert profile.limits_file().name == ".daily_limits.json"
 
@@ -35,7 +34,6 @@ def test_named_account_has_its_own_files():
     argv = ["main", "--account", "client", "--other"]
     assert profile.from_argv(argv) == "client"
     assert argv == ["main", "--other"], "flag should be consumed"
-    assert profile.env_file().name == ".env.client"
     assert profile.session_file().name == ".session.client.json"
     assert profile.limits_file().name == ".daily_limits.client.json"
 

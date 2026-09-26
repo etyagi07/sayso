@@ -1,77 +1,22 @@
-"""Collect Shoonya API credentials, and optionally remember them.
+"""Ask for the Shoonya API credentials at login. Nothing is saved.
 
-Run: python -m shoonya.credentials
+The three values from the broker's API app registration are typed at each
+login, used once to exchange the login code for a session, and dropped.
+They never touch the disk and are never read from the environment - a
+stored secret is a secret that can leak, and an exported SHOONYA_* shell
+variable once meant logging in to one account while the screen named
+another.
 
-These are the three values from the broker's API app registration. The
-secret code is typed hidden, the way a password should be, and saving is
-a choice rather than a requirement - some people would rather type it
-each day than leave it on disk.
+What IS kept is the day's session token (see shoonya.client), which dies
+with the trading day on its own.
 """
 
-from shoonya import profile as _profile
-
-_profile.from_argv()
-
-import getpass  # noqa: E402
-import os
-import stat
-import sys
+import getpass
 import warnings
-from pathlib import Path
 
 from shoonya import profile
 
-ROOT = Path(__file__).resolve().parent.parent
-ENV_FILE = profile.env_file()
-
-FIELDS = [
-    ("SHOONYA_CLIENT_ID", "Client ID", "usually your user ID plus a suffix, e.g. ABC123_U", False),
-    ("SHOONYA_USER_ID", "User ID", "the ID you log in to Shoonya with", False),
-    ("SHOONYA_SECRET_CODE", "Secret code", "64 characters, shown once at registration", True),
-]
-
 G, R, Y, DIM, X = "\033[92m", "\033[91m", "\033[93m", "\033[2m", "\033[0m"
-
-
-def read_env_file():
-    values = {}
-    if not ENV_FILE.exists():
-        return values
-    for line in ENV_FILE.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        values[key.strip()] = value.strip()
-    return values
-
-
-def have_credentials():
-    """True when all three values are available from file or environment."""
-    stored = read_env_file()
-    return all(os.environ.get(k) or stored.get(k) for k, *_ in FIELDS)
-
-
-def write_env_file(values):
-    """Write .env, preserving anything else already in it."""
-    existing = {}
-    other_lines = []
-    if ENV_FILE.exists():
-        for line in ENV_FILE.read_text().splitlines():
-            key = line.split("=", 1)[0].strip()
-            if key in {k for k, *_ in FIELDS}:
-                continue
-            if line.strip():
-                other_lines.append(line)
-    existing.update(values)
-
-    body = "\n".join(other_lines)
-    if body:
-        body += "\n"
-    body += "\n".join(f"{k}={existing[k]}" for k, *_ in FIELDS) + "\n"
-    ENV_FILE.write_text(body)
-    # Owner-only: this file is enough to trade the account.
-    ENV_FILE.chmod(stat.S_IRUSR | stat.S_IWUSR)
 
 
 def _clean(text):
@@ -79,17 +24,15 @@ def _clean(text):
     return text.strip().strip("\\/").strip().strip('"\'')
 
 
-def _ask_plain(label, shown, current, hint):
+def _ask_plain(label, hint):
     while True:
-        entered = _clean(input(f"  {label}{shown}: "))
-        if not entered and current:
-            return current
+        entered = _clean(input(f"  {label}: "))
         if entered:
             return entered
         print(f"    {DIM}{hint}{X}")
 
 
-def _ask_secret(label, shown, current):
+def _ask_secret(label):
     """Hidden entry, with a visible fallback.
 
     Some terminals will not deliver a paste to a hidden prompt, and
@@ -103,15 +46,12 @@ def _ask_secret(label, shown, current):
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", getpass.GetPassWarning)
-                entered = _clean(getpass.getpass(f"  {label}{shown}: "))
+                entered = _clean(getpass.getpass(f"  {label}: "))
         except (getpass.GetPassWarning, OSError):
             entered = ""
 
         if entered:
-            entered = _dedupe_paste(entered)
-            return entered
-        if current:
-            return current
+            return _dedupe_paste(entered)
 
         answer = input(f"    {Y}Show the text while you type or paste "
                        f"it?{X} [{G}Y{X}/n]: ").strip().lower()
@@ -159,29 +99,18 @@ def _dedupe_paste(text):
     return text
 
 
-def prompt(save=None):
-    """Ask for the three values. Returns them, and saves if asked to."""
-    stored = read_env_file()
+def ask():
+    """Ask for the three values. -> {"client_id", "user_id", "secret"}."""
     print(f"\n{DIM}Shoonya API credentials - account: {profile.label()}{X}")
-    print(f"{DIM}  From your API app registration at shoonya.com.{X}")
-    if stored:
-        print(f"{DIM}  Leave blank to keep an existing value.{X}")
+    print(f"{DIM}  From your API app registration at shoonya.com. Used for "
+          f"this login only - nothing is saved.{X}")
     print(f"{DIM}  Client ID usually ends in _U; the User ID does not.{X}\n")
 
-    values = {}
-    for key, label, hint, secret in FIELDS:
-        current = stored.get(key, "")
-        shown = ""
-        if current:
-            shown = (f" [{'*' * 8}]" if secret
-                     else f" [{current}]")
-        entered = (_ask_secret(label, shown, current) if secret
-                   else _ask_plain(label, shown, current, hint))
-        values[key] = entered
+    client = _ask_plain("Client ID", "usually your user ID plus a suffix, "
+                                     "e.g. ABC123_U")
+    user = _ask_plain("User ID", "the ID you log in to Shoonya with")
+    secret = _ask_secret("Secret code")
 
-    # The two IDs are related: the client ID is the user ID plus a suffix.
-    # Catching a mismatch here saves a confusing failure at login.
-    client, user = values["SHOONYA_CLIENT_ID"], values["SHOONYA_USER_ID"]
     # The client ID is the user ID plus a suffix, so the user ID never
     # carries one. Typing the client ID into both is the common slip, and
     # startswith() alone does not catch it because they are then equal.
@@ -193,44 +122,14 @@ def prompt(save=None):
             answer = input(f"  Use {G}{guess}{X} as the User ID? "
                            f"[{G}Y{X}/n]: ").strip().lower()
             if answer in ("", "y", "yes"):
-                values["SHOONYA_USER_ID"] = user = guess
+                user = guess
                 print(f"    {DIM}user id set to {guess}{X}")
 
-    secret_len = len(values["SHOONYA_SECRET_CODE"])
-    if secret_len != 64:
+    if len(secret) != 64:
         print(f"\n{Y}  The secret code is usually 64 characters; this one "
-              f"is {secret_len}.{X}")
+              f"is {len(secret)}.{X}")
         answer = input(f"  Enter it again? [{G}Y{X}/n]: ").strip().lower()
         if answer in ("", "y", "yes"):
-            values["SHOONYA_SECRET_CODE"] = _ask_secret("Secret code", "", "")
+            secret = _ask_secret("Secret code")
 
-    if save is None:
-        answer = input(f"\n  Save these to .env for next time? "
-                       f"[{G}Y{X}/n]: ").strip().lower()
-        save = answer in ("", "y", "yes")
-
-    if save:
-        write_env_file(values)
-        print(f"\n{G}  Saved to .env{X} {DIM}(readable only by you){X}")
-        print(f"{DIM}  It is gitignored - never commit or share it.{X}\n")
-    else:
-        print(f"\n{DIM}  Not saved. These apply to this session only;{X}")
-        print(f"{DIM}  you will be asked again next time.{X}\n")
-        for k, v in values.items():
-            os.environ[k] = v
-
-    return values
-
-
-def ensure(interactive=True):
-    """Make sure credentials are available, asking for them if needed."""
-    if have_credentials():
-        return True
-    if not interactive or not sys.stdin.isatty():
-        return False
-    prompt()
-    return True
-
-
-if __name__ == "__main__":
-    prompt()
+    return {"client_id": client, "user_id": user, "secret": secret}

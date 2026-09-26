@@ -100,18 +100,6 @@ def main():
           f"threshold {config.get('silence_rms')}",
           "python -m voice.calibrate")
 
-    env = profile.env_file()
-    if not env.exists():
-        check("credentials", False, "not set",
-              "python -m shoonya.credentials")
-    else:
-        text = env.read_text()
-        filled = all(f"{k}=" in text and text.split(f"{k}=")[1].split("\n")[0].strip()
-                     for k in ("SHOONYA_CLIENT_ID", "SHOONYA_USER_ID",
-                               "SHOONYA_SECRET_CODE"))
-        check("credentials", filled, ".env" if filled else "a field is empty",
-              "python -m shoonya.credentials")
-
     session_ok = False
     try:
         from shoonya.client import Shoonya, _session_alive
@@ -120,9 +108,6 @@ def main():
         check("broker session", session_ok,
               "logged in" if session_ok else "expired or absent",
               "python -m shoonya.login    (tokens last one trading day)")
-    except SystemExit:
-        check("broker session", False, "credentials not loaded",
-              "Fill in .env first, then: python -m shoonya.login")
     except Exception as e:
         check("broker session", False, f"{type(e).__name__}: {str(e)[:40]}",
               "python -m shoonya.login")

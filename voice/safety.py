@@ -21,7 +21,7 @@ STATE_FILE = profile.limits_file()
 
 @dataclass
 class Limits:
-    # Equity: any stock in voice.stocks (the Nifty 50 plus your additions).
+    # Equity: any stock in voice.stocks (the Nifty 50, plus Yes Bank).
     # Small caps - the client trades index options, not stocks. Big enough
     # for one share of any Nifty 50 name; some trade above Rs 10,000.
     max_order_value: float = 15000.0
@@ -111,10 +111,8 @@ def check(symbol, quantity, price, price_type, limits=LIMITS):
     base = symbol.upper().removesuffix("-EQ")
 
     if base not in limits.allowlist:
-        raise Rejected(
-            f"{base} isn't in the stock list. Add it with: python -m "
-            f"voice.stocks add \"name\" {base}"
-        )
+        raise Rejected(f"{base} isn't in the stock list - only Nifty 50 "
+                       f"stocks can be traded.")
 
     if price_type == "MKT":
         raise Rejected("Shoonya does not accept market orders; "

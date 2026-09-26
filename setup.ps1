@@ -39,9 +39,8 @@ Write-Host "ok dependencies installed" -ForegroundColor Green
 
 Write-Host ""
 Write-Host "Next steps:" -ForegroundColor DarkGray
-Write-Host "  1. .\.venv\Scripts\python.exe -m shoonya.credentials  your API credentials"
-Write-Host "  2. .\.venv\Scripts\python.exe -m voice.calibrate      measures your microphone"
-Write-Host "  3. .\.venv\Scripts\python.exe -m shoonya.login        once per trading day"
-Write-Host "  4. .\.venv\Scripts\python.exe -m voice.doctor         checks everything"
-Write-Host "  5. .\.venv\Scripts\python.exe -m voice.main           run it"
+Write-Host "  1. .\.venv\Scripts\python.exe -m voice.calibrate      measures your microphone"
+Write-Host "  2. .\.venv\Scripts\python.exe -m shoonya.login        once per trading day - asks for your API credentials"
+Write-Host "  3. .\.venv\Scripts\python.exe -m voice.doctor         checks everything"
+Write-Host "  4. .\.venv\Scripts\python.exe -m voice.main           run it"
 Write-Host ""

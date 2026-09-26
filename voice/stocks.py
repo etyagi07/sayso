@@ -2,28 +2,18 @@
 
 Spoken company names are the hardest thing in this program to get right.
 The first bug it ever had was "idea" resolving to IDEAFORGE by prefix
-search. So names are matched against this known list - never searched for
+search. So names are matched against this fixed list - never searched for
 - and anything that could mean two companies is asked about, not guessed.
 
-The built-in list is the Nifty 50 as of the September 2025 rebalance, with
-tokens checked against the broker. Membership changes every six months, so
-treat it as a starting point: add and remove your own with
-
-    python -m voice.stocks add "tata power" TATAPOWER
-    python -m voice.stocks remove TATAPOWER
-    python -m voice.stocks list
-
-Additions live in stocks.json, which is gitignored, so updates never
-overwrite them.
+The list is the Nifty 50 as of the September 2025 rebalance, with tokens
+checked against the broker, plus Yes Bank for low-cost testing. It is
+deliberately fixed: index options are the focus, and a short, known list
+is one that can be checked by hand. Membership changes every six months,
+so it is updated here, in code.
 """
 
 import difflib
-import json
 import re
-import sys
-from pathlib import Path
-
-USER_FILE = Path(__file__).resolve().parent.parent / "stocks.json"
 
 # symbol: (token, company, [spoken names])
 NIFTY50 = {
@@ -79,13 +69,10 @@ NIFTY50 = {
     "WIPRO": ("3787", "Wipro", ["wipro"]),
 }
 
-# Not in the Nifty 50, but worth having.
+# Not in the Nifty 50. The cheapest liquid stock - a ~Rs 23 way to test the
+# whole pipeline with real money on a small account.
 EXTRAS = {
-    # The cheapest liquid stock - a ~Rs 23 way to test the whole pipeline.
     "YESBANK": ("11915", "Yes Bank", ["yesbank", "yes bank"]),
-    # The other half of the 2025 Tata Motors demerger. "tata motors" names
-    # both, so it gets asked about rather than guessed.
-    "TMCV": ("759782", "Tata Motors (Commercial Vehicles)", ["tata motors", "tata motors commercial", "tata motors cv", "tmcv"]),
 }
 
 FILLER = re.compile(r"\b(?:the|shares?|stocks?|ltd|limited|of|company)\b")
@@ -98,26 +85,13 @@ def clean(name):
     return " ".join(name.split())
 
 
-def _user():
-    try:
-        return json.loads(USER_FILE.read_text())
-    except (OSError, ValueError):
-        return {}
-
-
 def all_stocks():
-    """{symbol: {token, company, names}} - built-in, extras, then yours."""
+    """{symbol: {token, company, names}} - the Nifty 50, then Yes Bank."""
     out = {}
     for table in (NIFTY50, EXTRAS):
         for sym, (token, company, names) in table.items():
             out[sym] = {"token": token, "company": company,
                         "names": [clean(n) for n in names]}
-    for sym, row in _user().items():
-        if row.get("removed"):
-            out.pop(sym, None)
-            continue
-        out[sym] = {"token": row["token"], "company": row["company"],
-                    "names": [clean(n) for n in row.get("names", [])]}
     return out
 
 
@@ -175,69 +149,3 @@ def resolve(spoken):
     # Never drop words to force a match: "sbi card" is not SBI, and "sun
     # tv" is not Sun Pharma. An unknown name is asked about, not guessed.
     return None
-
-
-# --- managing your own list -----------------------------------------------
-
-def add(name, symbol):
-    """Add a stock after checking it exists on NSE, reading its name back."""
-    import shoonya.broker as b
-
-    symbol = symbol.upper().removesuffix("-EQ")
-    uid = getattr(b.api(), "_NorenApi__username", None)
-    # Search by the name, not the symbol: symbols with '&' break the search.
-    found = None
-    for query in (symbol, name):
-        res = b._raw_post("/SearchScrip", {"uid": uid, "exch": "NSE",
-                                           "stext": query})
-        found = next((v for v in (res.get("values") or [])
-                      if v.get("tsym") == f"{symbol}-EQ"), None)
-        if found:
-            break
-    if not found:
-        raise SystemExit(f"{symbol}-EQ isn't listed on NSE. Check the symbol "
-                         f"- it's the ticker, e.g. TATAPOWER, not the name.")
-
-    rows = _user()
-    existing = rows.get(symbol, {})
-    names = sorted(set(existing.get("names", [])) | {name.lower().strip()})
-    rows[symbol] = {"token": found["token"],
-                    "company": (found.get("cname") or symbol).title(),
-                    "names": names}
-    USER_FILE.write_text(json.dumps(rows, indent=2) + "\n")
-    return rows[symbol]
-
-
-def remove(symbol):
-    symbol = symbol.upper().removesuffix("-EQ")
-    rows = _user()
-    if symbol in NIFTY50 or symbol in EXTRAS:
-        # Built-ins are hidden, not deleted, so an update cannot bring
-        # back something you took out.
-        rows[symbol] = {"removed": True}
-    elif symbol in rows:
-        del rows[symbol]
-    else:
-        raise SystemExit(f"{symbol} isn't in the list.")
-    USER_FILE.write_text(json.dumps(rows, indent=2) + "\n")
-
-
-def _main(argv):
-    if len(argv) >= 3 and argv[0] == "add":
-        row = add(" ".join(argv[1:-1]), argv[-1])
-        print(f"Added {argv[-1].upper()} - {row['company']}, said as: "
-              f"{', '.join(row['names'])}")
-    elif len(argv) == 2 and argv[0] == "remove":
-        remove(argv[1])
-        print(f"Removed {argv[1].upper()}.")
-    elif argv[:1] == ["list"] or not argv:
-        for sym, row in sorted(all_stocks().items()):
-            print(f"  {sym:<12} {row['company']:<34} {', '.join(row['names'])}")
-    else:
-        print(__doc__)
-        return 1
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(_main(sys.argv[1:]))

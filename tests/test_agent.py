@@ -47,6 +47,9 @@ def pos(tsym, qty, avg=100.0):
     return {"symbol": tsym, "qty": qty, "avg_price": avg, "ltp": avg + 1,
             "prd": "M"}
 
+# Captured before any test swaps it for a fake.
+REAL_POSITIONS = b.positions
+
 YES = lambda p: True  # noqa: E731
 NO = lambda p: False  # noqa: E731
 
@@ -159,17 +162,27 @@ def test_partial_fill_says_partial():
         assert "1 of 4" in r["speak"]
 
 
+def broker_says(reply):
+    """The real position book, with the broker's HTTP reply stubbed."""
+    return {"positions": REAL_POSITIONS, "_ids": lambda: ("U1", "U1"),
+            "_raw_post": lambda path, values: dict(reply)}
+
+
 def test_expired_session_is_not_an_empty_account():
     # Regression: the broker answers "no data" and "session expired" with
     # the same status, and both used to read as "you have no positions".
-    def expired(include_closed=False):
-        raise b.BrokerError("Session Expired :  Invalid Session Key")
-    with Fake(positions=expired):
+    # Goes through the real book reader - that is where they are told apart.
+    expired = {"stat": "Not_Ok", "emsg": "Session Expired :  Invalid Session Key"}
+    with Fake(**broker_says(expired)):
         for said in ("what do i own", "exit call", "sell my yesbank"):
             r = agent.handle(said, YES)
             assert r.get("broker_error"), said
             assert "no open" not in r["speak"].lower(), said
             assert "don't hold" not in r["speak"].lower(), said
+    # ...while a genuinely empty book still reads as empty.
+    with Fake(**broker_says({"stat": "Not_Ok", "emsg": "no data"})):
+        r = agent.handle("what do i own", YES)
+        assert r["speak"] == "You have no open positions.", r["speak"]
 
 
 # --- sending what was confirmed ------------------------------------------
@@ -207,6 +220,28 @@ def test_edited_price_is_sent_on_exit():
         assert f.sent[0]["price"] == 105.00, f.sent[0]
 
 
+def test_edited_price_is_sent_on_buys():
+    # The exit case above had a test; buys did not.
+    def edit(preview):
+        preview["price"] = 22.60
+        return True
+    with Fake() as f:
+        agent.handle("buy one yesbank intraday", edit)
+        assert f.sent and f.sent[0]["price"] == 22.60, f.sent
+
+    def edit_option(preview):
+        preview["price"] = 90.00
+        return True
+    saved = agent._ladder_and_spot
+    agent._ladder_and_spot = lambda name: (LADDER, 23047.0, date(2026, 9, 29))
+    try:
+        with Fake(option_contract=fake_option_contract) as f:
+            agent.handle("buy nifty call", edit_option)
+            assert f.sent and f.sent[0]["price"] == 90.00, f.sent
+    finally:
+        agent._ladder_and_spot = saved
+
+
 def test_unchecked_quote_never_prices_an_order():
     # Regression: the equity confirm box priced off a raw quote, which the
     # broker sometimes returns for the wrong instrument.
@@ -219,14 +254,16 @@ def test_unchecked_quote_never_prices_an_order():
 # --- exits are never trapped ---------------------------------------------
 
 def test_equity_exit_is_not_blocked_by_the_size_cap():
-    # Regression: a sell to close went through the 100-rupee cap, so a
-    # position could be impossible to exit by voice.
-    held = [{"symbol": "YESBANK-EQ", "qty": 50, "avg_price": 22.0,
+    # Regression: a sell to close went through the order-size cap, so a
+    # position could be impossible to exit by voice. 900 shares is over
+    # the per-order value cap - smaller, and this proves nothing.
+    held = [{"symbol": "YESBANK-EQ", "qty": 900, "avg_price": 22.0,
              "ltp": 22.44, "prd": "C"}]
+    assert 900 * 22.4 > safety.LIMITS.max_order_value
     with Fake(positions=lambda include_closed=False: held) as f:
         r = agent.handle("sell my yesbank", YES)
         assert not r.get("blocked"), r["speak"]
-        assert f.sent[0]["qty"] == 50
+        assert f.sent[0]["qty"] == 900
         assert f.sent[0]["side"] == "S"
         assert orders_counted() == 0, "exits do not use up the allowance"
 
@@ -392,7 +429,7 @@ def test_asks_how_many_and_uses_the_answer():
 
 def test_company_that_could_be_two_is_asked_about():
     with Fake() as f:
-        for said in ("buy one hdfc intraday", "buy one tata motors intraday",
+        for said in ("buy one hdfc intraday", "buy one tata intraday",
                      "buy one bajaj intraday"):
             r = agent.handle(said, YES)
             assert r.get("needs_clarification"), said
