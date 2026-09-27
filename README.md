@@ -221,23 +221,19 @@ bounded worst case. Press `p` at the confirmation to set your own price.
 
 ## Spoken readback
 
-Every preview is read out before you press `y`, and every result after.
-Each kind of result has its own sound, played before the words, so you
-know what happened without looking away from the chart:
+Every preview is read out before you press `y`, and every result after,
+with a sound first so you know what happened without looking away from the
+chart. There are only three to learn:
 
 | Sound (macOS) | Means |
 |---|---|
 | Glass | filled |
-| Ping | part filled |
 | Tink | placed, waiting to fill |
-| Basso | rejected by the broker |
-| Sosumi | outcome unknown — check your order book |
-| Pop | it's asking you something |
-| Funk | it didn't understand or refused — nothing was sent |
+| Basso | rejected |
+| Pop | anything else — part filled, unknown, a question, or nothing done: listen to the words |
 
-Hear them all, each followed by its meaning, with
-`.venv/bin/python -m voice.speak`. Windows has only five system sounds,
-so some share one there. A resting
+Hear them, each followed by its meaning, with
+`.venv/bin/python -m voice.speak`. A resting
 order is followed for five minutes and announced when it fills.
 
 Pressing Enter to talk stops any speech at once and opens the microphone —

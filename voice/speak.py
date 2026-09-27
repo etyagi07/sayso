@@ -26,23 +26,23 @@ from voice import config
 
 SYSTEM = platform.system()
 
-# Outcome -> sound. One sound per meaning, so each can be told apart
-# without listening to the words.
+# Outcome -> sound. Three to learn: filled, waiting, rejected. Everything
+# else - part filled, unknown, a question, a refusal - shares one sound that
+# means "listen to the words". Few enough to know by ear mid-trade.
+_MAC = "/System/Library/Sounds/"
+_LISTEN = {"Darwin": _MAC + "Pop.aiff", "Windows": "Question"}
 SOUNDS = {
     "Darwin": {
-        "filled": "/System/Library/Sounds/Glass.aiff",     # bright - done
-        "partial": "/System/Library/Sounds/Ping.aiff",     # some of it
-        "resting": "/System/Library/Sounds/Tink.aiff",     # waiting
-        "rejected": "/System/Library/Sounds/Basso.aiff",   # broker said no
-        "unknown": "/System/Library/Sounds/Sosumi.aiff",   # go and look
-        "question": "/System/Library/Sounds/Pop.aiff",     # answer me
-        "blocked": "/System/Library/Sounds/Funk.aiff",     # nothing sent
+        "filled": _MAC + "Glass.aiff",       # bright - done
+        "resting": _MAC + "Tink.aiff",       # waiting to fill
+        "rejected": _MAC + "Basso.aiff",     # low - broker said no
+        **{o: _LISTEN["Darwin"]
+           for o in ("partial", "unknown", "question", "blocked")},
     },
     "Windows": {
-        "filled": "Asterisk", "partial": "Exclamation", "resting": "Exclamation",
-        "rejected": "Hand", "unknown": "Hand", "question": "Question",
-        "blocked": "Beep",
-        # Windows has five system sounds, so some are shared here.
+        "filled": "Asterisk", "resting": "Exclamation", "rejected": "Hand",
+        **{o: _LISTEN["Windows"]
+           for o in ("partial", "unknown", "question", "blocked")},
     },
 }
 
@@ -317,12 +317,10 @@ class listening:
         _mic_open.clear()
 
 
-MEANINGS = [("filled", "Filled."), ("partial", "Part filled."),
+MEANINGS = [("filled", "Filled."),
             ("resting", "Placed, waiting to fill."),
-            ("rejected", "Rejected by the broker."),
-            ("unknown", "Outcome unknown. Check your order book."),
-            ("question", "I'm asking you something."),
-            ("blocked", "I didn't do anything.")]
+            ("rejected", "Rejected."),
+            ("question", "Anything else. Listen to what I say next.")]
 
 
 def tour():

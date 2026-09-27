@@ -69,15 +69,20 @@ def test_months_are_said_in_full():
     assert "1 October" in speak.for_speech("the Sensex 1 Oct 73900 call")
 
 
-def test_every_outcome_has_its_own_sound():
-    # A sound is only useful if it can be told apart without the words.
+def test_three_sounds_to_learn_and_one_for_everything_else():
+    # Filled, waiting and rejected are told apart by ear; everything else
+    # shares one "listen to the words" sound. More than that is too many
+    # to keep straight mid-trade.
+    for system, table in speak.SOUNDS.items():
+        key = {table[o] for o in ("filled", "resting", "rejected")}
+        rest = {table[o] for o in ("partial", "unknown", "question",
+                                   "blocked")}
+        assert len(key) == 3, (system, table)
+        assert len(rest) == 1 and not rest & key, (system, table)
+    # The sound tour plays each distinct sound exactly once.
     mac = speak.SOUNDS["Darwin"]
-    for outcome in ("filled", "partial", "resting", "rejected", "unknown",
-                    "question", "blocked"):
-        assert outcome in mac, outcome
-    assert len(set(mac.values())) == len(mac), mac
-    # The sound tour teaches every one of them.
-    assert {o for o, _ in speak.MEANINGS} == set(mac), speak.MEANINGS
+    toured = [mac[o] for o, _ in speak.MEANINGS]
+    assert sorted(toured) == sorted(set(mac.values())), speak.MEANINGS
 
 
 @with_fake_audio()
