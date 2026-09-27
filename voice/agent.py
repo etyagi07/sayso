@@ -10,7 +10,7 @@ import time
 import shoonya.broker as b
 from shoonya import instruments as ins
 from shoonya import network, underlyings
-from voice import numbers, safety, stocks, strikes
+from voice import safety, stocks, strikes
 from voice.parser import parse
 
 # A question the agent asked ("which index?"), and the order waiting on the
@@ -61,8 +61,9 @@ def _handle(transcript, confirm):
     elif pending and intent["intent"] == "number_answer" \
             and pending["missing"] == "quantity":
         spans = intent["number_spans"]
-        qty, used = numbers.parse(spans[0]) if len(spans) == 1 else (None, 0)
-        if qty is None or used != len(spans[0]) or not float(qty).is_integer():
+        # Read whole: "two fifty" adds up to 52, which is not what was meant.
+        qty = strikes._read(spans[0]) if len(spans) == 1 else None
+        if qty is None or not float(qty).is_integer() or qty < 1:
             return {"speak": "I didn't catch a quantity. Say the whole order "
                              "again.", "blocked": True}
         intent = {**pending["intent"], "quantity": int(qty)}
@@ -178,8 +179,17 @@ UNCLEAR = {
         "again."),
     "number_unclear": lambda i: f"I couldn't read the number in \"{i['heard']}\".",
     "quantity_ambiguous": lambda i: (
+        "I heard two quantities. Say one." if 0.5 in i["quantities"] else
         f"I heard two quantities, {i['quantities'][0]:g} and "
         f"{i['quantities'][1]:g}. Say one."),
+    "not_followed": lambda i: (
+        f"I didn't follow \"{i['heard']}\". Say it like: "
+        + {"option_buy": "buy Nifty call, 2 lots",
+           "exit": "exit Nifty call",
+           "order": "sell 10 Infosys"}.get(i.get("kind"), "buy Nifty call")
+        + "."),
+    "rupee_amount": lambda i: (
+        "I trade lots and shares, not rupee amounts. Say how many."),
 }
 
 
@@ -192,9 +202,12 @@ def _stock(name):
                       "blocked": True}
     if "ambiguous" in found:
         options = [company for _, company in found["ambiguous"]]
-        listed = ", ".join(options[:-1]) + " or " + options[-1]
-        return None, {"speak": f"{name.title()} could be {listed}. Say the "
-                               f"full name.", "blocked": True,
+        if len(options) == 1:
+            said = f"Did you mean {options[0]}? Say the full name."
+        else:
+            listed = ", ".join(options[:-1]) + " or " + options[-1]
+            said = f"{name.title()} could be {listed}. Say the full name."
+        return None, {"speak": said, "blocked": True,
                       "needs_clarification": True}
     return found, None
 
@@ -223,6 +236,11 @@ def _equity_order(intent, confirm):
             return {"speak": f"You don't hold any {company} to sell.",
                     "blocked": True}
         held = position["qty"]
+        if intent.get("half"):
+            if held < 2:
+                return {"speak": f"You hold {held} {company}, which can't be "
+                                 f"halved.", "blocked": True}
+            quantity = held // 2
         if quantity is None:
             quantity = held
         elif quantity > held:
@@ -333,8 +351,10 @@ def _other_index_hint(spans, name):
 
 
 AT_MARKET = ("Options go at market, so I don't take a price - I heard "
-             "\"at {heard}\". Say the strike, or leave it out for "
+             "\"{heard}\" as a price. Say the strike, or leave it out for "
              "at-the-money.")
+NOT_LOTS = ("I heard {heard}, which isn't a strike. If you meant lots, say "
+            "\"{heard} lots\".")
 
 
 def _read_numbers(intent, name):
@@ -345,21 +365,46 @@ def _read_numbers(intent, name):
                                            f"{underlyings.get(name).spoken} "
                                            f"level.", "blocked": True}
     spans = list(intent.get("number_spans") or [])
+    band = underlyings.band(name)
     # "buy call at 23100" names a strike. "buy call at 85" names a price -
-    # which options do not take - and must never be read as 85 lots.
-    for span in intent.get("price_spans") or []:
-        found, _ = strikes.resolve(span, ladder, spot, underlyings.band(name))
-        if found is None:
-            return None, None, None, {
-                "speak": AT_MARKET.format(heard=" ".join(span)),
-                "blocked": True, "needs_clarification": True}
-        spans.append(span)
-    lots, strike, err = strikes.read_order(spans, ladder, spot,
-                                           band=underlyings.band(name))
+    # which options do not take - and must never be read as 85 lots. A
+    # number said anywhere but before the index or "lots" is a strike too.
+    for key, message in (("price_spans", AT_MARKET), ("strike_spans", NOT_LOTS)):
+        for span in intent.get(key) or []:
+            found, _ = strikes.resolve(span, ladder, spot, band)
+            if found is None:
+                return None, None, None, {
+                    "speak": message.format(heard=" ".join(span)),
+                    "blocked": True, "needs_clarification": True}
+            spans.append(span)
+    lots, strike, err = strikes.read_order(spans, ladder, spot, band=band)
     if err:
         hint = _other_index_hint(intent.get("number_spans"), name)
         return None, None, None, {"speak": err + hint, "blocked": True,
                                   "needs_clarification": True}
+
+    # A correction swaps one detail: "make it two lots" keeps the strike,
+    # "sorry, 25300" keeps the lots.
+    if intent.get("strike_override"):
+        span = intent["strike_override"]
+        found, why = strikes.resolve(span, ladder, spot, band)
+        if found is None:
+            return None, None, None, {"speak": why, "blocked": True,
+                                      "needs_clarification": True}
+        strike = found
+    if intent.get("lots_override"):
+        value = strikes._read(intent["lots_override"])
+        if value is None or not float(value).is_integer() or value < 1:
+            return None, None, None, {
+                "speak": "I didn't catch how many lots. Say the whole order "
+                         "again.", "blocked": True,
+                "needs_clarification": True}
+        lots = int(value)
+
+    if intent.get("atm") and strike is not None:
+        return None, None, None, {
+            "speak": f"You said at-the-money and {strike:,}. Say one.",
+            "blocked": True, "needs_clarification": True}
     return lots, strike, expiry, None
 
 
@@ -411,6 +456,10 @@ def _handle_option(intent, confirm):
     c = b.option_contract(name, opt, strike=strike, expiry=expiry)
     if "error" in c:
         return {"speak": c["error"], "blocked": True}
+    if intent.get("weekly") and c.get("cadence") != "weekly":
+        return {"speak": f"{u.spoken} has no weekly contract - the nearest "
+                         f"is the monthly. Say it without \"weekly\".",
+                "blocked": True, "needs_clarification": True}
 
     if kind == "option_quote":
         return {"speak": f"The {u.spoken} {_expiry_words(c['expiry'])} "
@@ -496,8 +545,12 @@ def _exit_option(intent, confirm):
     # Numbers said with an exit: a strike, a number of lots, or both - read
     # the same way as a buy, but against the strikes actually held, so
     # nothing can match a position that was not named.
+    if intent.get("strike_override") or intent.get("lots_override"):
+        return {"speak": "Say the whole exit again, with the change in it.",
+                "blocked": True, "needs_clarification": True}
     spans = list(intent.get("number_spans") or [])
-    at = intent.get("price_spans") or []
+    # After "at", or anywhere lots can't be: it can only be a held strike.
+    at = (intent.get("price_spans") or []) + (intent.get("strike_spans") or [])
     lots = None
     if spans or at:
         held_strikes = {c["strike"] for _, c in held}
@@ -541,6 +594,17 @@ def _exit_option(intent, confirm):
     pos, c = held[0]
     qty = abs(pos["qty"])
     lot = c.get("lot") or 1
+    if intent.get("half"):
+        # Half, in whole lots, rounded down - there is no half lot.
+        if lots is not None:
+            return {"speak": "I heard half and a number of lots. Say one.",
+                    "blocked": True, "needs_clarification": True}
+        if qty // lot < 2:
+            return {"speak": f"You hold 1 lot of the {friendly(pos['symbol'])}"
+                             f", which can't be halved. Say \"exit "
+                             f"{underlyings.get(c['underlying']).spoken} "
+                             f"{word}\" to close it.", "blocked": True}
+        lots = (qty // lot) // 2
     if lots is not None:
         if lots * lot > qty:
             have = (f"{qty // lot} lot{'s' if qty // lot != 1 else ''}"

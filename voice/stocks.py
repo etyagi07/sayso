@@ -12,7 +12,6 @@ is one that can be checked by hand. Membership changes every six months,
 so it is updated here, in code.
 """
 
-import difflib
 import re
 
 # symbol: (token, company, [spoken names])
@@ -135,17 +134,13 @@ def resolve(spoken):
     for sym in table:
         if n.replace(" ", "") == sym.lower().replace("-", "").replace("&", "and"):
             return _hit(sym, table, "symbol")
-    # 3. The start of a longer name: "tata" -> every Tata company.
+    # 3. The start of a longer name: "tata" -> every Tata company. Always
+    #    confirmed, even when only one listed company fits: "bharat" may
+    #    mean Bharat Forge, which isn't listed, not Bharat Electronics.
     starts = {s for name, syms in by_name.items()
               if name.startswith(n + " ") for s in syms}
     if starts:
-        return one_or_many(starts, "prefix")
-    # 4. A near-miss from the recogniser - strict, since a wrong company
-    #    looks entirely plausible on the confirmation screen.
-    close = difflib.get_close_matches(n, list(by_name), n=3, cutoff=0.86)
-    found = {s for c in close for s in by_name[c]}
-    if found:
-        return one_or_many(found, "close")
-    # Never drop words to force a match: "sbi card" is not SBI, and "sun
+        return {"ambiguous": sorted((s, table[s]["company"]) for s in starts)}
+    # No near-miss matching: "idfc bank" is not HDFC Bank. Never drop words to force a match: "sbi card" is not SBI, and "sun
     # tv" is not Sun Pharma. An unknown name is asked about, not guessed.
     return None

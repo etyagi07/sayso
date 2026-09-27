@@ -1,16 +1,20 @@
 """Turn a transcript into a structured intent.
 
-Rule-based and offline. Deliberately conservative: anything it is not sure
-about becomes an 'unknown' intent rather than a guess, because the cost of
-a wrong guess here is a real trade. A Claude tool-use parser can replace
-this later behind the same parse() signature.
+Rule-based and offline. The rule for anything that would trade: every word
+must have a known job - an action, an index, call or put, a company, a
+number in a clear role, intraday or delivery, or harmless filler. A word
+with no job means the sentence is asked about, not guessed at. Ignoring
+unknown words is what turned "buy nifty call stop loss 5" into 5 lots and
+"is my nifty call closed?" into an exit.
+
+tests/test_phrasebook.py lists what each kind of sentence does.
 """
 
 import re
 
 from voice import numbers, strikes
 from voice.aliases import canonical
-from voice.fuzzy import normalise
+from voice.fuzzy import LEADING_FILLER, normalise
 
 WORD_NUMBERS = {
     "zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
@@ -47,6 +51,17 @@ def _numeric_word(w):
     return w != "and" and strikes._is_numeric(w)
 
 
+def _quantity(tokens):
+    """A share count, read whole - or None. "two hundred fifty" is 250; "two
+    fifty" (which adds up to 52) and "one zero zero" (1) are not counts."""
+    if not strikes._additive(tokens):
+        return None
+    value, used = numbers.parse(tokens)
+    if value is None or used != len(tokens) or not float(value).is_integer():
+        return None
+    return int(value)
+
+
 def _number(text):
     if text is None:
         return None
@@ -70,14 +85,38 @@ QUESTION = re.compile(r"^(?:(?:ok|okay|so|um|uh|hey|alright|well|hmm|and)\s+)*"
 QUESTION_ANYWHERE = re.compile(r"\b(?:(?:should|shall|can|could|would|may|"
                                r"might) (?:i|we)|do you think|what if|"
                                r"is it a good|is now a good)\b")
-# The speaker changing their mind mid-sentence. The last one wins.
+# Asking about the past or the state of things - "is my call closed?", "did
+# I buy a call?" - is never an order, whatever words follow.
+STATUS_QUESTION = re.compile(r"^(?:(?:ok|okay|so|um|uh|hey|alright|well|hmm|"
+                             r"and|but)\s+)*(?:did|does|do|is|are|was|were|"
+                             r"has|have|had|will|when|who|why|how|what|which|"
+                             r"where)\b")
+# The speaker changing their mind mid-sentence. The last one wins. A bare
+# "no" is not here: "call, no put" can mean "not put" as easily as "put
+# instead", so it is asked about.
 CORRECTION = re.compile(r"\b(?:no wait|no no|wait|sorry|i mean|actually|"
-                        r"make that|make it|change that to|no)\b")
+                        r"make that|make it|change that to)\b")
 # "a call instead of a put" names the thing NOT wanted after the marker, so
 # it is dropped rather than read as a correction to it.
 NOT_THIS = re.compile(r"\b(?:instead of|rather than)\s+(?:an?\s+|the\s+)?\S+")
-NEGATION = {"don't", "dont", "not", "never", "no"}
-PRICE_WORDS = ("at", "@")
+NEGATION = {"don't", "dont", "not", "never", "no", "won't", "wont", "can't",
+            "cant", "cannot", "shouldn't", "shouldnt", "wouldn't", "wouldnt",
+            "couldn't", "couldnt", "didn't", "didnt", "mustn't"}
+# Said before the action, these call it off: "cancel buy nifty call".
+CALL_OFF = NEGATION | {"cancel", "stop"}
+# A number after these is a price - never a lot count.
+PRICE_WORDS = ("at", "@", "for")
+LOT_WORDS = ("lot", "lots")
+TRADES = {"option_buy", "option_exit", "order"}
+# Sounds, not words. Never "oh" - that is a digit ("two three oh five").
+HESITATION = {"um", "umm", "uh", "uhh", "hm", "hmm", "mm", "mmm", "er", "erm",
+              "ah", "eh"}
+# Words that can sit in an option order without changing it.
+OPTION_FILLER = {"a", "an", "the", "of", "on", "in", "for", "at", "@", "it",
+                 "index", "option", "options", "position", "positions",
+                 "contract", "strike", "all", "lot", "lots", "atm", "weekly"}
+# Things said as the part after "sorry" / "make it": a detail, nothing more.
+DETAIL_FILLER = {"a", "an", "the", "it", "that", "one", "lot", "lots", "of"}
 
 
 def _slots(text):
@@ -91,6 +130,22 @@ def _slots(text):
 
 def _is_verb(word):
     return bool(re.fullmatch(rf"{BUY_WORDS}|{SELL_WORDS}|{EXIT_WORDS}", word))
+
+
+def _rupee_amount(words):
+    """A sum of money said as the size of an order: "worth 500", "500
+    rupees of". A price is fine - "at 22 rupees" - an amount is not."""
+    if "worth" in words:
+        return True
+    for i, w in enumerate(words):
+        if w not in ("rupee", "rupees", "rs"):
+            continue
+        j = i
+        while j > 0 and strikes._is_numeric(words[j - 1]):
+            j -= 1
+        if j < i and not (j > 0 and words[j - 1] in PRICE_WORDS):
+            return True
+    return False
 
 
 # What a correction can be merged from - anything else in it means the
@@ -108,7 +163,12 @@ def parse(transcript):
     # Curly apostrophes ("Don’t") and digit grouping ("23,000") are how
     # recognisers write; the rules below expect neither.
     t = transcript.replace("\u2019", "'").replace("\u2018", "'")
-    t = re.sub(r"(?<=\d),(?=\d)", "", t).replace("\u20b9", " ")
+    t = re.sub(r"(?<=\d),(?=\d)", "", t)
+    # "₹8" is eight rupees - kept as words, so an amount can be told
+    # from a price.
+    t = re.sub(r"\u20b9\s*([\d.]+)", r"\1 rupees", t).replace("\u20b9", " ")
+    # "twenty-five" is two number words, not one unreadable one.
+    t = re.sub(r"(?<=[A-Za-z])-(?=[A-Za-z])", " ", t)
     t = normalise(t)
     t = re.sub(r"[.!?,;:]+(?!\d)", " ", t)
     t = " ".join(t.split())
@@ -120,11 +180,36 @@ def parse(transcript):
     if QUESTION.match(t) or QUESTION_ANYWHERE.search(t):
         return {"intent": "question", "transcript": transcript}
 
+    result = _parse(t, transcript)
+    # "did I buy a call?", "is my call closed?" - about the past or the
+    # state of things. What/how/which also open price questions ("what is
+    # the nifty call at"), so those stay quotes.
+    m = STATUS_QUESTION.match(t)
+    if m and (result["intent"] in TRADES | {"not_followed"}
+              or (result["intent"] == "option_quote"
+                  and m.group(0).split()[-1] not in ("what", "how", "which"))):
+        return {"intent": "question", "transcript": transcript}
+    return result
+
+
+def _parse(t, transcript):
+    """parse(), after the text is tidied and the obvious non-orders are out."""
+    if _rupee_amount(t.split()):
+        return {"intent": "rupee_amount", "transcript": transcript}
+
     t = NOT_THIS.sub(" ", t)
     t = " ".join(w for w in t.split() if w not in ("instead", "rather"))
 
     words = t.split()
     verbs = [i for i, w in enumerate(words) if _is_verb(w)]
+
+    # A bare "no" after the action: "buy nifty call no put". Could be a
+    # correction or a "not"; either reading is a guess.
+    for i, w in enumerate(words):
+        if (w == "no" and verbs and i > verbs[0]
+                and words[i + 1:i + 2] not in (["wait"], ["no"])
+                and words[i - 1] != "no"):
+            return {"intent": "unclear_correction", "transcript": transcript}
 
     # A correction: "buy call no wait put". Everything after the last
     # correction word overrides what came before it - but only a detail
@@ -147,22 +232,28 @@ def parse(transcript):
         after_words = after.split()
         base = _parse_one(before) if before else after_parsed
         opt, index, spans = _slots(after)
-        if (any(_is_verb(w) or w in NEGATION for w in after_words)
-                or not base["intent"].startswith("option_")
-                or not (opt or index or spans)):
+        # Only a like-for-like swap: call for put, an index for an index, a
+        # strike for a strike, lots for lots. Replacing every number lost
+        # the strike when only the lots were corrected.
+        extra = [w for w in after_words
+                 if w not in OPTION_WORDS and w not in INDEX_WORDS
+                 and w not in DETAIL_FILLER and not strikes._is_numeric(w)]
+        if (extra or not base["intent"].startswith("option_")
+                or not (opt or index or spans) or len(spans) > 1):
             return {"intent": "unclear_correction", "transcript": transcript}
         if opt:
             base["option_type"] = opt
         if index:
             base["underlying"] = index
         if spans:
-            base["number_spans"] = spans
-            base["price_spans"] = []
+            key = ("lots_override" if any(w in LOT_WORDS for w in after_words)
+                   else "strike_override")
+            base[key] = spans[0]
         base["corrected"] = True
         return base
 
-    # "don't buy a call" - a negated action is not an instruction.
-    if verbs and any(w in NEGATION for w in words[:verbs[0]]):
+    # "don't buy a call", "cancel buy nifty call" - not an instruction.
+    if verbs and any(w in CALL_OFF for w in words[:verbs[0]]):
         return {"intent": "negated", "transcript": transcript}
 
     # "buy a call not a put": drop option words that were negated; if both
@@ -174,10 +265,17 @@ def parse(transcript):
     if len(kinds) > 1:
         return {"intent": "option_ambiguous", "transcript": transcript}
     if len(kinds) == 1 and any(w in NEGATION for w in words):
+        # "a call not a put": drop the negated option word, the "not" and
+        # its article, so nothing is left over without a job.
         keep = kinds.pop()
-        cleaned = [w for i, w in enumerate(words)
-                   if not (w in OPTION_WORDS and OPTION_WORDS[w] != keep)]
-        t = " ".join(cleaned)
+        drop = set()
+        for i, w in enumerate(words):
+            if w in OPTION_WORDS and OPTION_WORDS[w] != keep:
+                drop.add(i)
+                for j in (i - 1, i - 2):
+                    if j >= 0 and words[j] in NEGATION | {"a", "an", "the"}:
+                        drop.add(j)
+        t = " ".join(w for i, w in enumerate(words) if i not in drop)
 
     return _parse_one(t)
 
@@ -186,12 +284,22 @@ def _parse_one(transcript):
     """Read one command, with no negation or correction left in it."""
     # Repair recogniser near-misses and collapse synonyms before any
     # pattern matching, so the rules below only see canonical vocabulary.
-    t = normalise(transcript)
+    t = normalise(transcript, first_word=False)
     # Whisper punctuates freely: "BUY 10 YESBANK." must not search "yesbank."
     # But a decimal point inside a price is data, not punctuation - only
     # strip marks that are NOT followed by a digit, so 23.20 survives.
     t = re.sub(r"[.!?,;:]+(?!\d)", " ", t)
     # Word-bounded, or "years bank" loses its "rs " and becomes "yeabank".
+    # "Okay, buy a put": what is said before a command isn't part of it,
+    # and hesitation sounds carry no meaning wherever they fall.
+    words0 = [w for w in t.split() if w not in HESITATION]
+    while words0 and words0[0] in LEADING_FILLER:
+        words0.pop(0)
+    t = " ".join(words0)
+    # Orders always go at market, so saying so changes nothing.
+    t = re.sub(r"\b(?:at\s+)?(?:the\s+)?market(?:\s+price)?\b", " ", t)
+    t = re.sub(r"\b(?:right\s+)?now\b", " ", t)
+    t = re.sub(r"\bat\s+the\s+money\b", "atm", t)
     t = re.sub(r"\b(?:rupees?|rs)\b", " ", t)
     t = " ".join(t.split())
     if not re.search(r"[a-z0-9]", t):
@@ -229,9 +337,13 @@ def _parse_one(transcript):
     if odd:
         return {"intent": "number_unclear", "heard": odd}
 
-    if re.search(r"\b(funds?|balance|cash|money|buying power)\b", t):
+    # Information requests - but not when an action was said: "buy nifty
+    # call out of the money" is not a question about funds.
+    acting = bool(re.search(rf"\b({BUY_WORDS}|{SELL_WORDS}|{EXIT_WORDS})\b", t))
+    if not acting and re.search(r"\b(funds?|balance|cash|money|buying power)\b", t):
         return {"intent": "funds"}
-    if re.search(r"\b(positions?|holdings?|what do i (own|have)|portfolio)\b", t):
+    if not acting and re.search(
+            r"\b(positions?|holdings?|what do i (own|have)|portfolio)\b", t):
         return {"intent": "positions"}
     if re.search(r"\b(orders?|order book|pending)\b", t) and not re.search(
             rf"\b({BUY_WORDS}|{SELL_WORDS})\b", t):
@@ -253,12 +365,22 @@ def _parse_one(transcript):
     # later, against the live strike ladder. A number after "at" is a
     # price - never a lot count - so it is kept apart: "buy call at 85"
     # read as 85 lots is the worst reading there is.
-    spans, price_spans = [], []
-    for start, _, span in strikes.number_spans(words_all):
-        if start > 0 and words_all[start - 1] in PRICE_WORDS:
-            price_spans.append(span)
-        else:
+    #
+    # Lots must be labelled: "2 lots", or said right before the index or
+    # call/put ("2 nifty calls"). A number anywhere else can only be a
+    # strike - "buy nifty call 5" is not 5 lots.
+    spans, price_spans, strike_spans = [], [], []
+    for start, end, span in strikes.number_spans(words_all):
+        before = words_all[start - 1] if start > 0 else None
+        after = words_all[end] if end < len(words_all) else None
+        if after in LOT_WORDS:
             spans.append(span)
+        elif before in PRICE_WORDS:
+            price_spans.append(span)
+        elif after in INDEX_WORDS or after in OPTION_WORDS:
+            spans.append(span)
+        else:
+            strike_spans.append(span)
 
     is_buy = bool(re.search(rf"\b({BUY_WORDS})\b", t))
     is_sell = bool(re.search(rf"\b({SELL_WORDS}|{EXIT_WORDS}|write)\b", t))
@@ -275,17 +397,33 @@ def _parse_one(transcript):
         is_exit = bool(re.search(rf"\b({EXIT_WORDS})\b", t))
         is_buy = bool(re.search(rf"\b({BUY_WORDS})\b", t))
         is_sell = bool(re.search(r"\b(sell|short|write)\b", t))
+        if is_exit or is_buy:
+            # Every word needs a job. "half" only makes sense for an exit.
+            known = OPTION_FILLER | {"exit" if is_exit else "buy"}
+            if is_exit:
+                known |= {"half"}
+            unknown = [w for w in words_all
+                       if w not in known and w not in OPTION_WORDS
+                       and w not in INDEX_WORDS and not strikes._is_numeric(w)]
+            if unknown:
+                return {"intent": "not_followed", "heard": " ".join(unknown),
+                        "kind": "exit" if is_exit else "option_buy"}
+            flags = {"atm": "atm" in words_all,
+                     "weekly": "weekly" in words_all,
+                     "half": "half" in words_all}
         if is_exit:
             return {"intent": "option_exit", "option_type": opt,
                     "underlying": underlying, "number_spans": spans,
-                    "price_spans": price_spans}
+                    "price_spans": price_spans,
+                    "strike_spans": strike_spans, **flags}
         if is_buy:
             # Hand every number in the utterance to the caller. Telling a
             # strike from a quantity needs the live strike ladder, which
             # lives where market data does - not in the parser.
             return {"intent": "option_buy", "option_type": opt,
                     "underlying": underlying, "lots": None,
-                    "number_spans": spans, "price_spans": price_spans}
+                    "number_spans": spans, "price_spans": price_spans,
+                    "strike_spans": strike_spans, **flags}
         if is_sell:
             # Selling to open is unlimited-risk and sounds too much like
             # "exit". Refuse rather than guess which was meant.
@@ -295,13 +433,15 @@ def _parse_one(transcript):
                               "Say 'exit call' or 'exit put' to close a position."}
         return {"intent": "option_quote", "option_type": opt,
                 "underlying": underlying, "number_spans": spans,
-                "price_spans": price_spans}
+                "price_spans": price_spans, "strike_spans": strike_spans}
 
     # "what is yesbank at" / "price of yesbank" / "yesbank quote"
     m = re.search(r"(?:price of|quote for|quote|what'?s|what is|how much is)\s+([a-z0-9 ]+?)"
                   r"(?:\s+(?:at|act|add|trading|going|doing|now))?$", t)
     if m:
-        return {"intent": "quote", "name": canonical(m.group(1).strip())}
+        name = re.sub(r"^(?:the\s+)?(?:price|quote|rate)\s+(?:of|for)\s+", "",
+                      m.group(1).strip())
+        return {"intent": "quote", "name": canonical(name)}
 
     side = None
     if re.search(rf"\b({BUY_WORDS})\b", t):
@@ -342,17 +482,33 @@ def _parse_one(transcript):
             if w in ("at", "for", "@") and i + 1 < len(rest):
                 value, used = numbers.parse(rest[i + 1:])
                 if value is not None:
+                    # Nothing may follow the price: "at 22 100" dropped the
+                    # 100 shares and sold the whole holding.
+                    after = rest[i + 1 + used:]
+                    if after:
+                        return {"intent": "not_followed",
+                                "heard": " ".join(after), "kind": "order"}
                     price = value
                     rest = rest[:i]
                     break
 
+        half = "half" in rest
+        rest = [w for w in rest if w != "half"]
+        if half and side == "B":
+            return {"intent": "not_followed", "heard": "half", "kind": "order"}
+
         qty = None
-        if rest:
-            value, used = numbers.parse(rest)
-            # Only take it as a quantity if something remains to name the
-            # instrument - "buy yesbank" must not read "yesbank" as a number.
-            if value is not None and used < len(rest):
-                qty, rest = value, rest[used:]
+        lead = 0
+        while lead < len(rest) and _numeric_word(rest[lead]):
+            lead += 1
+        # Only take it as a quantity if something remains to name the
+        # instrument - "buy yesbank" must not read "yesbank" as a number.
+        if 0 < lead < len(rest):
+            qty = _quantity(rest[:lead])
+            if qty is None:
+                return {"intent": "number_unclear",
+                        "heard": " ".join(rest[:lead])}
+            rest = rest[lead:]
 
         # "sell yesbank 500": a quantity after the name. Missing it sells
         # the whole holding.
@@ -360,8 +516,8 @@ def _parse_one(transcript):
         while tail > 1 and _numeric_word(rest[tail - 1]):
             tail -= 1
         if tail < len(rest):
-            value, used = numbers.parse(rest[tail:])
-            if value is None or used != len(rest) - tail:
+            value = _quantity(rest[tail:])
+            if value is None:
                 return {"intent": "number_unclear",
                         "heard": " ".join(rest[tail:])}
             if qty is not None:
@@ -371,14 +527,17 @@ def _parse_one(transcript):
         if qty is not None and not float(qty).is_integer():
             return {"intent": "number_unclear", "heard": str(qty)}
 
-        rest = [w for w in rest if w not in ("of", "all", "worth")]
+        rest = [w for w in rest if w not in ("of", "all", "in", "on")]
         if any(_numeric_word(w) for w in rest):
             # A number left inside the name - which one was the quantity?
             return {"intent": "number_unclear", "heard": " ".join(rest)}
         name = " ".join(rest).strip()
         if name:
+            if half and qty is not None:
+                return {"intent": "quantity_ambiguous",
+                        "quantities": [qty, 0.5]}
             return {"intent": "order", "side": side, "quantity": qty,
                     "name": canonical(name), "price": price,
-                    "product": product}
+                    "product": product, "half": half}
 
     return {"intent": "unknown", "transcript": transcript}

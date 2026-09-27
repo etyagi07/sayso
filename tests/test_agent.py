@@ -504,7 +504,8 @@ LADDER = set(range(22500, 23700, 50))
 def fake_option_contract(name, opt, strike=None, expiry=None):
     strike = strike or 23050
     return {"tsym": f"NIFTY29SEP26{opt[0]}{strike}", "token": "1",
-            "exchange": "NFO", "underlying": name, "cadence": "weekly",
+            "exchange": "NFO", "underlying": name,
+            "cadence": "monthly" if name == "BANKNIFTY" else "weekly",
             "lot": 65, "tick": 0.05, "strike": strike, "expiry": "2026-09-29",
             "expires_today": False, "option_type": opt, "ltp": 80.0,
             "bid": 79.9, "ask": 80.1, "spot": 23047.0, "lower_circuit": 1.0,
@@ -616,6 +617,66 @@ def test_an_ip_refusal_is_explained():
     with Fake(positions=refused):
         r = agent.handle("what do i own", YES)
         assert r.get("blocked") and "internet-address" in r["speak"], r
+
+
+# --- every word has a job (the strict speech rule) ----------------------------
+
+def test_a_number_that_is_not_a_strike_is_not_quietly_lots():
+    def check(f):
+        r = agent.handle("buy nifty call 5", YES)
+        assert not f.sent and '"5 lots"' in r["speak"], r["speak"]
+        r = agent.handle("buy nifty call for 5", YES)
+        assert not f.sent and "price" in r["speak"], r["speak"]
+        agent.handle("buy nifty call 2 lots", YES)
+        assert f.sent and f.sent[0]["qty"] == 130, f.sent
+    with_ladder(check)
+
+
+def test_a_correction_swaps_only_what_was_corrected():
+    def check(f):
+        agent.handle("buy nifty 23100 call, make it two lots", YES)
+        agent.handle("buy two nifty 23100 calls, sorry, 23150", YES)
+        got = [(o["tsym"][-6:], o["qty"]) for o in f.sent]
+        assert got == [("C23100", 130), ("C23150", 130)], got
+    with_ladder(check)
+
+
+def test_weekly_and_atm_are_honoured_or_asked_about():
+    def check(f):
+        r = agent.handle("buy bank nifty weekly call", YES)
+        assert not f.sent and "weekly" in r["speak"], r["speak"]
+        r = agent.handle("buy nifty 23100 atm call", YES)
+        assert not f.sent and "Say one" in r["speak"], r["speak"]
+        agent.handle("buy nifty weekly atm call", YES)
+        assert len(f.sent) == 1, f.sent
+    with_ladder(check)
+
+
+def test_half_closes_half_in_whole_units():
+    held = [pos("NIFTY29SEP26C23100", 195)]            # three lots
+    with Fake(positions=lambda include_closed=False: held) as f:
+        agent.handle("close half my nifty call", YES)
+        assert f.sent and f.sent[0]["qty"] == 65, f.sent  # 1 of 3, down
+    with Fake(positions=lambda include_closed=False: [
+            pos("NIFTY29SEP26C23100", 65)]) as f:
+        r = agent.handle("close half my nifty call", YES)
+        assert not f.sent and "can't be halved" in r["speak"], r["speak"]
+    shares = [{"symbol": "YESBANK-EQ", "qty": 51, "avg_price": 22.0,
+               "ltp": 22.44, "prd": "I"}]
+    with Fake(positions=lambda include_closed=False: shares) as f:
+        agent.handle("sell half my yes bank", YES)
+        assert f.sent and f.sent[0]["qty"] == 25, f.sent
+
+
+def test_words_with_no_job_and_rupee_amounts_are_asked_about():
+    shown = []
+    with Fake() as f:
+        for said in ("buy nifty call stop loss 5", "buy yes bank worth 500",
+                     "is my nifty call closed?", "I won't buy nifty call",
+                     "buy two fifty yes bank", "exit all yes bank"):
+            r = agent.handle(said, lambda p: shown.append(p) or True)
+            assert r.get("blocked") or r.get("cancelled"), (said, r)
+        assert not shown and not f.sent
 
 if __name__ == "__main__":
     passed = failed = 0

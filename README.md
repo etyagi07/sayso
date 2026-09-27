@@ -30,7 +30,7 @@ Speech recognition runs locally via Whisper; no audio leaves your machine.
 - **Nifty, Bank Nifty and Sensex options** — nearest expiry, at the money
   unless you say a strike. Nifty and Sensex are weekly; Bank Nifty has no
   weekly contract, so it is the nearest monthly, and Sayso says so.
-- **Nifty 50 stocks**, plus any you add, intraday or delivery.
+- **Nifty 50 stocks** (plus Yes Bank for testing), intraday or delivery.
 
 **What makes it safe to talk to**
 
@@ -198,6 +198,27 @@ buy 10 reliance intraday               buy one infosys for the day
 buy 2 l and t delivery                 what is hdfc bank at
 sell my reliance
 ```
+
+**Every word needs a job.** An order is read only if each word in it is an
+action, an index, call or put, a company, a number in a clear role, intraday
+or delivery, or harmless filler ("the", "at market", "ATM", "weekly", "um").
+Anything else — "stop loss 5", "next expiry", "worth 500" — gets *"I didn't
+follow …"* and an example, never a guess. Numbers have fixed roles:
+
+- **lots** — "2 lots", or said right before the index: "buy 2 Nifty calls"
+- **strike** — any other number: "buy Nifty call 23100". "Buy Nifty call 5"
+  asks whether you meant 5 lots.
+- **a price** after "at" or "for" — options refuse it, since they go at
+  market; for stocks it's shown on the confirmation screen
+
+Corrections swap one thing of the same kind: "no wait, put", "make it two
+lots" (keeps the strike), "sorry, 23150" (keeps the lots). A bare "no" —
+"call, no put" — is asked about. "Close half" / "sell half" works, in whole
+lots or shares. Questions ("did I buy…", "is my call closed?") and "won't",
+"can't", "don't" never trade. Company names are matched exactly; a partial
+name ("bharat") is confirmed, and near-misses are refused.
+
+`tests/test_phrasebook.py` lists what each kind of sentence does.
 
 **Answers to its questions** are one word: "bank nifty", "delivery",
 "three". Anything else drops the question.

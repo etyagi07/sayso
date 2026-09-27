@@ -243,7 +243,10 @@ seconds, so a half-finished order can't be completed by accident later.
 ## Changing your mind
 
 - *"buy call, no wait, put"* — buys the put. The last thing you said wins.
-- *"don't buy a call"* — does nothing.
+- *"buy nifty 23100 call, make it two lots"* — two lots, same strike. A
+  correction changes one thing of the same kind.
+- *"call, no put"* — asks, because it could mean either.
+- *"don't buy a call"*, *"I won't buy…"* — does nothing.
 - *"should I buy Reliance?"* — treated as a question, not an order.
 - *"cancel"* or *"never mind"* — drops whatever it was asking.
 
@@ -274,7 +277,13 @@ in use is shown at the top when you start.
 **"I didn't catch an instruction in that."** Try simpler words:
 *buy / sell / exit*, the index or company, *call / put*.
 
-**"I don't know ___."** That stock isn't in the list. Add it (above).
+**"I didn't follow ___."** A word in your command had no job — something
+like "stop loss", "next expiry" or "worth". Say it again the way the example
+suggests. Lots need the word *lots* ("2 lots"), or go before the index
+("2 Nifty calls").
+
+**"I don't know ___."** That stock isn't in the list — the Nifty 50 plus Yes
+Bank. Say the company's full name; near-misses are not guessed.
 
 **"… isn't a listed strike near …"** The number didn't match a real
 contract. Say the full strike, or say it digit by digit.

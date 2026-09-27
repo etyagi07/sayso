@@ -5,12 +5,12 @@ invisible to a regex: "put" comes back as "button", YESBANK as "years
 bank". Rather than widening every pattern, normalise the words first, so
 the parser only ever sees canonical vocabulary.
 
-Matching is deliberately conservative - a token is only rewritten when it
-is a close match AND not already a real word we know. The cost of a wrong
-rewrite here is a wrong trade.
+Only known mishearings are rewritten - the lists below. There is no
+"close enough" guessing: it once turned "all" into "call", so "exit all yes
+bank" closed a Nifty option. A word that isn't on a list is left alone, and
+the parser asks about it.
 """
 
-import difflib
 import re
 
 # Canonical word -> the things people and recognisers actually say.
@@ -103,8 +103,12 @@ def _stock_words():
     return words
 
 
-def normalise(text, cutoff=0.82):
-    """Rewrite a transcript into canonical vocabulary."""
+def normalise(text, first_word=True):
+    """Rewrite a transcript into canonical vocabulary.
+
+    `first_word` reads an opening "by"/"bye" as buy. Only the first pass
+    may: it still sees the punctuation that tells "Bye. Nifty call." apart.
+    """
     t = " ".join(text.lower().split())
     for pattern, repl in PHRASES:
         t = re.sub(pattern, repl, t)
@@ -112,11 +116,14 @@ def normalise(text, cutoff=0.82):
     tokens = t.split()
     while tokens and tokens[-1].strip(".,!?;:") in SIGN_OFFS:
         tokens.pop()
-    # "by 10 yes bank" is buy - but only as the opening word, where no
-    # other reading makes sense.
+    # "by 10 yes bank" is buy - but only as the opening word, run straight
+    # into the command. "Bye. Nifty call." is a sign-off then a question,
+    # and "by the way" is not an order.
     first = next((i for i, tok in enumerate(tokens)
                   if tok.strip(".,!?;:") not in LEADING_FILLER), None)
-    if first is not None and tokens[first].strip(".,!?;:") in ("by", "bye"):
+    if (first_word and first is not None and tokens[first] in ("by", "bye")
+            and (first + 1 == len(tokens)
+                 or tokens[first + 1].strip(".,!?;:") != "the")):
         tokens[first] = "buy"
 
     keep = PROTECTED | _stock_words()
@@ -126,11 +133,5 @@ def normalise(text, cutoff=0.82):
         if not bare or bare in keep:
             out.append(token)
             continue
-        if bare in _LOOKUP:
-            out.append(_LOOKUP[bare])
-            continue
-        # Near-miss: only rewrite on a strong match.
-        match = difflib.get_close_matches(bare, _LOOKUP.keys(), n=1,
-                                          cutoff=cutoff)
-        out.append(_LOOKUP[match[0]] if match else token)
+        out.append(_LOOKUP.get(bare, token))
     return " ".join(out)

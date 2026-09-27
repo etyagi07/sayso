@@ -209,6 +209,15 @@ def test_no_way_of_saying_a_strike_resolves_to_a_different_one():
                 assert got in (None, k), (said, got)
 
 
+def test_a_premium_is_never_read_as_a_strike():
+    # "bank nifty call at 560" meant a premium of 560, not strike 56,000.
+    bank = set(range(54000, 57001, 100))
+    for said, ladder, spot in (("560", bank, 55500), ("540", bank, 55500),
+                               ("250", set(range(24000, 26001, 50)), 25000),
+                               ("820", set(range(79500, 82501, 100)), 81000)):
+        assert resolve([said], ladder, spot, 1500)[0] is None, said
+
+
 def test_no_numbers():
     assert read_order([], LADDER, SPOT) == (None, None, None)
 

@@ -114,7 +114,10 @@ def candidates(span):
             out.add(int(joined))
             for cut in range(1, len(joined)):
                 head, tail = joined[:cut], joined[cut:]
-                if len(tail) <= 3:
+                # The tail is the hundreds-and-tens part: "50", "100",
+                # "000". A one-digit or "00" tail reads a premium as a
+                # strike - "560" became 56|0 = 56,000 on Bank Nifty.
+                if 2 <= len(tail) <= 3 and tail != "00":
                     out.add(int(head) * 1000 + int(tail))
 
     # Digits then a scale: "seven four thousand" is 74 thousand, not the
