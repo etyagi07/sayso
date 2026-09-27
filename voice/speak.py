@@ -329,7 +329,9 @@ def tour():
         print("Speech is off or unavailable on this machine.")
         return
     for outcome, meaning in MEANINGS:
-        print(f"  {outcome:9} {meaning}")
+        # "question" is only the key for the shared sound - it covers more.
+        label = "other" if outcome == "question" else outcome
+        print(f"  {label:9} {meaning}")
         sound(outcome)
         say(meaning)
         wait_until_quiet(15)
