@@ -10,6 +10,7 @@ from shoonya import profile
 
 profile.from_argv()
 
+from shoonya import network  # noqa: E402
 from shoonya.client import session_user  # noqa: E402
 from voice import safety, speak, watch
 from voice.agent import friendly, handle
@@ -30,11 +31,25 @@ def banner(s):
             f"{DIM}  options: {caps}{X}\n" + limits_line(s))
 
 
+def _network_check():
+    """Warn before the first command if the API key won't accept this
+    computer's address - otherwise the first sign is a refused order."""
+    state, message = network.check()
+    if state == "mismatch":
+        print(f"\n  {R}{message}{X}")
+        speak.announce({"speak": "Warning. This computer's internet address "
+                                 "isn't registered with your API key, so "
+                                 "orders will be refused.", "blocked": True})
+    elif state != "ok":
+        print(f"{DIM}  {message}{X}")
+
+
 def main():
     s = safety.status()
     print(f"\n{DIM}┄┄┄ voice trading ┄┄┄{X}")
     warm_up()
     print(banner(s))
+    _network_check()
     print(f"\n{G}● READY{X} {DIM}- press Enter to speak · 't' to type · ctrl-c to quit{X}\n")
 
     while True:

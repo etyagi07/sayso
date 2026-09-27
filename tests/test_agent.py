@@ -602,6 +602,21 @@ def test_nothing_done_is_always_flagged():
             assert r.get("blocked") or r.get("outcome"), (said, r)
         assert not f.sent
 
+
+def test_an_ip_refusal_is_explained():
+    # The broker's own words don't say what to do. Nothing was sent.
+    with Fake(place=lambda *a: {"status": "REJECTED",
+                                "reason": "Invalid IP address"}):
+        r = agent.handle("buy one yesbank intraday", YES)
+        assert "internet-address" in r["speak"], r["speak"]
+        assert orders_counted() == 0
+
+    def refused(include_closed=False):
+        raise b.BrokerError("Request not allowed from this IP")
+    with Fake(positions=refused):
+        r = agent.handle("what do i own", YES)
+        assert r.get("blocked") and "internet-address" in r["speak"], r
+
 if __name__ == "__main__":
     passed = failed = 0
     for name, fn in sorted(globals().items()):

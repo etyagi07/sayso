@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 MODULES = [
     "shoonya.client", "shoonya.broker", "shoonya.instruments",
-    "shoonya.credentials", "shoonya.underlyings",
+    "shoonya.credentials", "shoonya.underlyings", "shoonya.network",
     "voice.agent", "voice.parser", "voice.strikes", "voice.numbers",
     "voice.fuzzy", "voice.safety", "voice.config", "voice.listen",
     "voice.calibrate", "voice.doctor", "voice.cli", "voice.main",
@@ -23,6 +23,7 @@ MODULES = [
 # Names other code calls by hand, so a rename or deletion is caught here.
 PUBLIC = {
     "shoonya.credentials": ["ask"],
+    "shoonya.network": ["check", "explain", "registered", "save", "ask"],
     "shoonya.client": ["Shoonya", "connect", "session_user"],
     "shoonya.broker": ["place", "wait_for_outcome", "order_book",
                        "option_contract", "marketable_price",

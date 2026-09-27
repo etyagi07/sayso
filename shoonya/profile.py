@@ -35,6 +35,11 @@ def session_file():
     return ROOT / f".session{_tag()}.json"
 
 
+def account_file():
+    """Per-account settings that are not credentials - registered IPs."""
+    return ROOT / f".account{_tag()}.json"
+
+
 def limits_file():
     return ROOT / f".daily_limits{_tag()}.json"
 

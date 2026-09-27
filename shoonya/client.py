@@ -70,9 +70,12 @@ class Shoonya(NorenApi):
         result, detail = _exchange(self, code, creds)
         creds.clear()           # used once; not kept around in memory
         if not result:
+            from shoonya import network
+            hint = network.explain(detail)
             raise SystemExit(
                 f"Token exchange failed for code {code!r}.\n"
                 f"  Broker said: {detail}\n"
+                + (f"  {hint}\n" if hint else "") +
                 f"  Auth codes are single-use and expire in minutes - "
                 f"log in again for a fresh one."
             )

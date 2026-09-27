@@ -10,9 +10,18 @@ an order.**
 
 - **A Mac or Windows PC** with a microphone. Apple Silicon Macs are fastest.
 - **Python 3.12 or newer.** Check with `python3 --version`.
-- **A Shoonya account with API access**, and an API app registered in it.
-  From the registration you need a **client ID**, your **user ID** and a
-  **secret code** (shown once — copy it then).
+- **A Shoonya account with API access**, and an API key generated on the
+  **Api Key Generation** page. Fill it in like this:
+  - **URL:** `http://127.0.0.1:8787/` — exactly, including the final `/`
+  - **Primary IP Address:** the internet address of the network you'll
+    trade from (search "what is my IP" on that network). The key only works
+    from here — this is a SEBI rule for API trading.
+  - **Backup IP Address:** optional — a second network, e.g. your phone's
+    hotspot. Home broadband and hotspots can change address without warning;
+    if yours does, update it on this page.
+
+  From that page you need the **client ID**, your **user ID**, the **secret
+  code**, and the IP address(es) you entered.
 - **For options:** the F&O segments enabled on your account — NFO for Nifty
   and Bank Nifty, BFO for Sensex. Stocks work without them.
 
@@ -66,8 +75,13 @@ Once per trading day:
 .venv/bin/python -m shoonya.login
 ```
 
-It first asks for your three API values, from your API app registration on
-shoonya.com:
+The first time, it asks for the IP address(es) you registered for the key,
+and saves them for this account — they aren't secret. Every login then
+checks that this computer is on one of them, and warns you before the
+browser opens if it isn't. Check any time with
+`.venv/bin/python -m shoonya.network`.
+
+Then it asks for your three API values, from the Api Key Generation page:
 
 ```
 Client ID:    ABC123_U        ← usually your user ID plus a suffix

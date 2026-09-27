@@ -9,7 +9,7 @@ import time
 
 import shoonya.broker as b
 from shoonya import instruments as ins
-from shoonya import underlyings
+from shoonya import network, underlyings
 from voice import numbers, safety, stocks, strikes
 from voice.parser import parse
 
@@ -42,8 +42,10 @@ def handle(transcript, confirm=None):
         # Only reads raise this - placing an order never does - so nothing
         # has been sent. Say so, rather than letting a failed read pass as
         # "you have no positions".
+        hint = network.explain(str(e))
         return {"speak": f"I couldn't reach the broker, so I haven't done "
-                         f"anything. {e}", "blocked": True, "broker_error": True}
+                         f"anything. {hint or e}", "blocked": True,
+                "broker_error": True}
 
 
 def _handle(transcript, confirm):
@@ -620,7 +622,9 @@ def _execute(side, tsym, quantity, price, exchange, product, did, value,
     sent = b.place(side, tsym, quantity, price, exchange, product)
 
     if sent["status"] == "REJECTED":
-        return {"speak": f"Rejected by the broker. {sent['reason']}".strip(),
+        hint = network.explain(sent.get("reason"))
+        return {"speak": f"Rejected by the broker. {hint or sent['reason']}"
+                         .strip(),
                 "outcome": "rejected", "data": sent}
 
     if sent["status"] == "UNKNOWN":

@@ -155,6 +155,14 @@ dropped. The only thing kept is the day's session, which expires on its own,
 in a file only you can read. Your password and OTP go to the broker, never
 to this program.
 
+**The API key only works from the internet addresses registered for it**
+(a SEBI rule for API trading). Home broadband and phone hotspots can change
+address without warning, and the broker's refusal doesn't say why — so
+login asks once for the registered address, and login, the app and
+`voice.doctor` all check this computer is on it before anything is sent.
+`python -m shoonya.network` checks on demand; the lookup is one request to a
+public what's-my-IP service, never on the order path.
+
 **More than one account?** Add `--account NAME` to login and to the app.
 Each account keeps its own login session and daily limits, and the app
 shows the ID you are actually logged in as:

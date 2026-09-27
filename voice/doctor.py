@@ -96,6 +96,15 @@ def main():
           "just read the screen instead.",
           blocking=False)
 
+    from shoonya import network
+    state, message = network.check()
+    check("internet address", state == "ok", message if state == "ok" else
+          {"mismatch": "not registered with this API key",
+           "unset": "registered address not saved",
+           "unknown": "couldn't look it up"}[state],
+          message if state != "ok" else "",
+          blocking=state in ("mismatch", "unset"))
+
     check("microphone calibrated", config.is_calibrated(),
           f"threshold {config.get('silence_rms')}",
           "python -m voice.calibrate")
