@@ -76,6 +76,7 @@ class Fake:
         defaults = {
             "quote_checked": lambda *a, **k: dict(QUOTE),
             "positions": lambda include_closed=False: [],
+            "order_book": lambda: [],
             "place": self._place,
             "wait_for_outcome": lambda order_no, **k: {
                 "order_no": order_no, "status": "COMPLETE", "final": True,
@@ -677,6 +678,157 @@ def test_words_with_no_job_and_rupee_amounts_are_asked_about():
             r = agent.handle(said, lambda p: shown.append(p) or True)
             assert r.get("blocked") or r.get("cancelled"), (said, r)
         assert not shown and not f.sent
+
+
+# --- release review, 28 Sep ----------------------------------------------------
+
+def test_no_second_exit_while_one_is_working():
+    # "exit" said again while the first exit rested sent a second sell -
+    # if both filled, a short position.
+    held = [pos("NIFTY29SEP26C23100", 65)]
+    working = [{"tsym": "NIFTY29SEP26C23100", "trantype": "S",
+                "status": "OPEN", "qty": "65", "prc": "80.00"}]
+    with Fake(positions=lambda include_closed=False: held,
+              order_book=lambda: working) as f:
+        r = agent.handle("exit nifty call", YES)
+        assert not f.sent and "already working" in r["speak"], r["speak"]
+    shares = [{"symbol": "YESBANK-EQ", "qty": 5, "avg_price": 22.0,
+               "ltp": 22.44, "prd": "I"}]
+    working = [{"tsym": "YESBANK-EQ", "trantype": "S", "status": "OPEN",
+                "qty": "5", "prc": "22.40"}]
+    with Fake(positions=lambda include_closed=False: shares,
+              order_book=lambda: working) as f:
+        r = agent.handle("sell my yes bank", YES)
+        assert not f.sent and "already working" in r["speak"], r["speak"]
+    # A finished order is not in the way.
+    done = [dict(working[0], status="COMPLETE")]
+    with Fake(positions=lambda include_closed=False: shares,
+              order_book=lambda: done) as f:
+        agent.handle("sell my yes bank", YES)
+        assert f.sent, "a completed order blocked a new exit"
+
+
+def test_which_strike_answer_keeps_the_lots():
+    held = [pos("NIFTY29SEP26C23100", 650), pos("NIFTY29SEP26C23150", 650)]
+    with Fake(positions=lambda include_closed=False: held) as f:
+        r = agent.handle("exit nifty call two lots", YES)
+        assert r.get("needs_answer") == "strike", r["speak"]
+        agent.handle("23100", YES)
+        assert f.sent == [] or f.sent[0]["qty"] == 130, f.sent
+        assert f.sent and f.sent[0]["tsym"].endswith("23100"), f.sent
+
+
+def test_a_misheard_answer_keeps_the_order_and_asks_again():
+    with Fake() as f:
+        r = agent.handle("buy one yes bank", YES)
+        assert r.get("needs_answer") == "product"
+        r = agent.handle("umbrella", YES)
+        assert "Intraday or delivery" in r["speak"], r["speak"]
+        agent.handle("intraday", YES)
+        assert f.sent and f.sent[0]["product"] == "I", f.sent
+
+
+def test_four_heard_as_for_never_becomes_one_lot_or_everything():
+    held = [pos("NIFTY29SEP26C23100", 650)]
+    with Fake(positions=lambda include_closed=False: held) as f:
+        r = agent.handle("exit nifty call for lots", YES)
+        assert not f.sent and "four" in r["speak"], r["speak"]
+        r = agent.handle("buy nifty call for lots", YES)
+        assert not f.sent, f.sent
+
+
+def test_a_sent_order_is_never_lost_track_of():
+    # A garbled reply while watching the order, or Ctrl-C during the wait:
+    # it may be live, so it is counted and the user told to look.
+    for trouble in (AttributeError("garbled"), KeyboardInterrupt()):
+        def wait(n, **k):
+            raise trouble
+        with Fake(wait_for_outcome=wait) as f:
+            r = agent.handle("buy one yesbank intraday", YES)
+            assert f.sent and r["outcome"] == "unknown", r
+            assert "order book" in r["speak"], r["speak"]
+            assert orders_counted() == 1, "possibly live - must count"
+
+
+def test_option_lot_caps_hold():
+    # The only size guard on options. It had no test: disabling it passed
+    # every suite.
+    from datetime import date as _d
+    saved = agent._ladder_and_spot
+    agent._ladder_and_spot = lambda name: (
+        {"NIFTY": LADDER, "BANKNIFTY": set(range(54000, 57001, 100)),
+         "SENSEX": set(range(79500, 82501, 100))}[name],
+        {"NIFTY": 23047.0, "BANKNIFTY": 55500.0, "SENSEX": 81000.0}[name],
+        _d(2026, 9, 29))
+    try:
+        for said, allowed in (("buy nifty call 11 lots", False),
+                              ("buy nifty call 10 lots", True),
+                              ("buy bank nifty call 4 lots", False),
+                              ("buy bank nifty call 3 lots", True),
+                              ("buy sensex call 11 lots", False),
+                              ("buy sensex call 10 lots", True)):
+            with Fake(option_contract=fake_option_contract) as f:
+                r = agent.handle(said, YES)
+                assert bool(f.sent) == allowed, (said, r["speak"])
+                if not allowed:
+                    assert "cap" in r["speak"], r["speak"]
+    finally:
+        agent._ladder_and_spot = saved
+
+
+def test_daily_caps_hold():
+    with Fake():
+        for _ in range(safety.LIMITS.max_option_orders_per_day):
+            safety.record(100.0, "options")
+        try:
+            safety.check_option("NIFTY29SEP26C23100", "NIFTY", 1, 65, 80.0)
+        except safety.Rejected:
+            pass
+        else:
+            raise AssertionError("daily option order cap not enforced")
+    with Fake():
+        try:
+            safety.check("YESBANK-EQ", 1000, 22.0, "LMT")    # 22,000 > 15,000
+        except safety.Rejected:
+            pass
+        else:
+            raise AssertionError("per-order value cap not enforced")
+        try:
+            safety.check("NOTLISTED-EQ", 1, 22.0, "LMT")
+        except safety.Rejected:
+            pass
+        else:
+            raise AssertionError("stock list not enforced")
+
+
+def test_not_logged_in_is_said_plainly():
+    # Every morning before the login: this was a RuntimeError, printed as
+    # "error: ..." and never spoken.
+    saved = (b._api, b.connect)
+    b._api = None
+
+    def no_session(interactive=True):
+        raise RuntimeError("No valid cached session")
+    b.connect = no_session
+    try:
+        for said in ("funds", "what do i own"):
+            r = agent.handle(said, YES)
+            assert r.get("blocked") and "not logged in" in r["speak"], r
+    finally:
+        b._api, b.connect = saved
+
+
+def test_an_error_in_the_main_loop_is_spoken():
+    from voice import main, speak
+    heard = []
+    saved = speak.announce
+    speak.announce = heard.append
+    try:
+        main.report_error(OSError("microphone unplugged"))
+    finally:
+        speak.announce = saved
+    assert heard and heard[0].get("blocked"), heard
+    assert "nothing was done" in heard[0]["speak"], heard
 
 if __name__ == "__main__":
     passed = failed = 0

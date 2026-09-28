@@ -44,6 +44,15 @@ def _network_check():
         print(f"{DIM}  {message}{X}")
 
 
+def report_error(e):
+    """Something broke. Say so out loud - eyes on the chart would otherwise
+    see nothing - and put the detail on screen, where it can be read."""
+    print(f"  {R}error: {type(e).__name__}: {e}{X}")
+    speak.announce({"speak": "Something went wrong, so nothing was done. "
+                             "The details are on the screen.",
+                    "blocked": True})
+
+
 def main():
     s = safety.status()
     print(f"\n{DIM}┄┄┄ voice trading ┄┄┄{X}")
@@ -71,7 +80,7 @@ def main():
             print(f"\n{DIM}○ stopped{X}")
             return
         except Exception as e:
-            print(f"  {R}error: {type(e).__name__}: {e}{X}")
+            report_error(e)
             continue
 
         colour = R if result.get("blocked") else X

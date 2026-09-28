@@ -54,6 +54,19 @@ def test_unsafe_names_are_refused():
         raise AssertionError(f"accepted account name {bad!r}")
 
 
+@isolated
+def test_hints_name_this_python_and_this_account():
+    # Hints said bare "python" - missing on a Mac, the wrong Python on
+    # Windows - and dropped --account, so following one acted on the
+    # default account.
+    hint = profile.cmd("shoonya.login")
+    assert not hint.startswith("python "), hint
+    assert "python" in hint and hint.endswith("-m shoonya.login"), hint
+    profile.from_argv(["main", "--account", "client"])
+    assert profile.cmd("shoonya.login").endswith("--account client")
+    assert "--account" not in profile.cmd("pip", "install", account=False)
+
+
 if __name__ == "__main__":
     passed = failed = 0
     for name, fn in sorted(globals().items()):

@@ -226,6 +226,12 @@ def _parse(t, transcript):
             return {"intent": "unclear_correction", "transcript": transcript}
         if CANCEL.match(after):
             return {"intent": "cancel"}
+        # Call and put both said on one side of the correction is not a
+        # correction, it is unclear - "call, put, sorry, two lots".
+        for part in (before, after):
+            if len({OPTION_WORDS[w] for w in part.split()
+                    if w in OPTION_WORDS}) > 1:
+                return {"intent": "option_ambiguous", "transcript": transcript}
         after_parsed = _parse_one(after)
         if after_parsed["intent"] not in SLOT_ONLY:
             return after_parsed          # a whole new command
@@ -394,6 +400,15 @@ def _parse_one(transcript):
         # "buy bank nifty" - an index is not something you can buy.
         return {"intent": "index_needs_type", "underlying": underlying}
     if opt:
+        # "four lots" heard as "for lots", "two" as "to": a number that came
+        # through as a word. Read as filler it became 1 lot - or, on an
+        # exit, the whole position.
+        for i, w in enumerate(words_all[:-1]):
+            nxt = words_all[i + 1]
+            if w in ("for", "to", "too") and (
+                    nxt in LOT_WORDS or nxt in INDEX_WORDS
+                    or nxt in OPTION_WORDS):
+                return {"intent": "number_unclear", "heard": f"{w} {nxt}"}
         is_exit = bool(re.search(rf"\b({EXIT_WORDS})\b", t))
         is_buy = bool(re.search(rf"\b({BUY_WORDS})\b", t))
         is_sell = bool(re.search(r"\b(sell|short|write)\b", t))

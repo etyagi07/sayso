@@ -1,15 +1,19 @@
 # Tutorial: from clone to your first voice trade
 
 About 20 minutes, most of it one-time setup. Each step says what you should
-see, so you can tell working from broken. **Nothing up to Step 6 can place
-an order.**
+see, so you can tell working from broken. **Nothing is ever sent until you
+press `y` on a confirmation screen** — and before Step 6 you won't be asked
+to.
 
 ---
 
 ## Before you start
 
 - **A Mac or Windows PC** with a microphone. Apple Silicon Macs are fastest.
-- **Python 3.12 or newer.** Check with `python3 --version`.
+- **Python 3.12 or 3.13**, from [python.org](https://www.python.org/downloads/).
+  On Windows, tick **"Add python.exe to PATH"** on the installer's first
+  screen. Check with `python3 --version` (Mac) or `python --version`
+  (Windows).
 - **A Shoonya account with API access**, and an API key generated on the
   **Api Key Generation** page. Fill it in like this:
   - **URL:** `http://127.0.0.1:8787/` — exactly, including the final `/`
@@ -29,14 +33,34 @@ an order.**
 
 ## Step 1 — Install
 
+Get the code, **either** with git:
+
 ```bash
-git clone https://github.com/<you>/sayso.git
+git clone https://github.com/etyagi07/sayso.git
 cd sayso
-./setup.sh                       # Windows: powershell -ExecutionPolicy Bypass -File setup.ps1
 ```
 
-It finds Python, builds a virtual environment and installs everything. Expect
-a couple of minutes. It ends by listing the next steps.
+**or** without git: on [github.com/etyagi07/sayso](https://github.com/etyagi07/sayso)
+choose **Code → Download ZIP**, extract it, and open a terminal in the
+extracted folder (the one containing `setup.sh`).
+
+Then run the setup:
+
+```bash
+./setup.sh                                          # Mac
+powershell -ExecutionPolicy Bypass -File setup.ps1  # Windows
+```
+
+It finds Python, builds a private environment inside the folder and installs
+everything — nothing touches your other Python projects. Expect a couple of
+minutes. It ends by listing the next steps.
+
+> **On Windows**, wherever a command starts with `.venv/bin/python`, type
+> `.\.venv\Scripts\python.exe` instead — for example
+> `.\.venv\Scripts\python.exe -m voice.calibrate`. The setup script prints the
+> Windows forms for you, and every hint the program prints is already right
+> for your computer.
+
 
 ---
 
@@ -141,14 +165,18 @@ options: NIFTY 10 lots · BANKNIFTY 3 lots · SENSEX 10 lots
 ● READY - press Enter to speak · 't' to type · ctrl-c to quit
 ```
 
+The first start downloads the speech model (about 500 MB), and may print
+warnings from "huggingface" about a token or symlinks — they're harmless.
+
 Press **Enter**, wait for **RECORDING**, speak, then pause. It stops by
 itself. Press `t` instead to type a command. If it is still talking when
 you press Enter, it stops at once so you can speak.
 
 Every result starts with a sound, so you can keep your eyes on the chart.
-Three to learn: **Glass** filled, **Tink** waiting to fill, **Basso**
-rejected. Anything else — part filled, unknown, a question, or nothing
-done — is **Pop**: listen to the words. To hear them once, each followed by
+Three to learn: **filled**, **waiting to fill**, **rejected**. Anything
+else — part filled, unknown, a question, or nothing done — shares a fourth
+sound that means "listen to the words". On a Mac they are Glass, Tink,
+Basso and Pop; Windows uses its own sounds. To hear yours, each followed by
 its meaning:
 
 ```bash
@@ -180,7 +208,10 @@ It asks:
 
 > *"Intraday or delivery?"*
 
-Say *"intraday"*. It reads the order back and shows it:
+Say *"intraday"* — or *"delivery"* after about 3:15 pm, when the broker
+stops taking new intraday orders and squares off the day's intraday
+positions. If it doesn't catch your answer it asks again; you can also press
+`t` and type it. It reads the order back and shows it:
 
 ```
 ┌─ CONFIRM ─────────────────────────────────
@@ -245,7 +276,7 @@ seconds, so a half-finished order can't be completed by accident later.
 - *"buy call, no wait, put"* — buys the put. The last thing you said wins.
 - *"buy nifty 23100 call, make it two lots"* — two lots, same strike. A
   correction changes one thing of the same kind.
-- *"call, no put"* — asks, because it could mean either.
+- *"buy call, no put"* — asks, because it could mean either.
 - *"don't buy a call"*, *"I won't buy…"* — does nothing.
 - *"should I buy Reliance?"* — treated as a question, not an order.
 - *"cancel"* or *"never mind"* — drops whatever it was asking.
@@ -292,7 +323,7 @@ contract. Say the full strike, or say it digit by digit.
 a safety limit, working as intended. They're in `voice/safety.py`.
 
 **"I couldn't reach the broker, so I haven't done anything."** Usually an
-expired login — run `python -m shoonya.login` again.
+expired login — run `.venv/bin/python -m shoonya.login` again.
 
 **"I can't confirm that order went through."** The connection dropped after
 sending. **Check your order book in the Shoonya app before trying again** —
@@ -301,5 +332,5 @@ the order may be live.
 **Recording never stops, or cuts you off.** Run `voice.calibrate` again in
 the room you'll use it in.
 
-**Anything else:** run `python -m voice.doctor` and read the lines marked
+**Anything else:** run `.venv/bin/python -m voice.doctor` and read the lines marked
 FAIL.

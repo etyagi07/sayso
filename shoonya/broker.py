@@ -37,10 +37,20 @@ class BrokerError(Exception):
     """
 
 
+class NotLoggedIn(BrokerError):
+    """No usable session - the day's login hasn't been done yet."""
+
+
 def api():
     global _api
     if _api is None:
-        _api = connect(interactive=False)
+        try:
+            _api = connect(interactive=False)
+        except RuntimeError:
+            # Every morning until the login is done. Said plainly, and
+            # handled like any other broker error rather than a crash.
+            raise NotLoggedIn("You're not logged in today. Run the login, "
+                              "then try again.")
     return _api
 
 
@@ -93,10 +103,14 @@ def _book(path, with_account=True):
         values["actid"] = actid
     res = _raw_post(path, values)
     if isinstance(res, list):
-        return res
+        # Rows only - a stray non-dict in the list must not crash a caller
+        # that is reconciling an order it may have just placed.
+        return [r for r in res if isinstance(r, dict)]
     if _is_empty(res):
         return []
-    raise BrokerError(res.get("emsg") or f"Unexpected reply from {path}")
+    # A garbled reply (null, a string) is an error, not an AttributeError.
+    emsg = res.get("emsg") if isinstance(res, dict) else None
+    raise BrokerError(emsg or f"Unexpected reply from {path}: {res!r:.100}")
 
 
 def order_book():

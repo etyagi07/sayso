@@ -109,6 +109,26 @@ def test_a_quote_for_another_instrument_is_thrown_away():
     assert quoting([NIFTY_INDEX, THE_OPTION])["lp"] == "106"
     assert quoting([NIFTY_INDEX] * 4) is None
 
+
+def test_a_garbled_order_book_is_an_error_not_a_crash():
+    # null or a string from the order book raised AttributeError - inside
+    # the reconciliation of an order that may just have been placed.
+    saved = (b._api, b._raw_post)
+    b._api = types.SimpleNamespace(**{"_NorenApi__username": "U1",
+                                      "_NorenApi__accountid": "U1"})
+    try:
+        for garbage in (None, "Service Unavailable", ["junk", 3]):
+            b._raw_post = lambda path, values, g=garbage: g
+            try:
+                rows = b.order_book()
+            except b.BrokerError:
+                continue
+            assert rows == [], (garbage, rows)
+    finally:
+        b._api, b._raw_post = saved
+    out = placing(requests.ConnectionError("reset"), book=())
+    assert out["status"] == "UNKNOWN", out
+
 if __name__ == "__main__":
     passed = failed = 0
     for name, fn in sorted(globals().items()):

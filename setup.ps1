@@ -32,9 +32,15 @@ if (-not (Test-Path .venv)) {
     Write-Host "ok .venv exists" -ForegroundColor Green
 }
 
-& .\.venv\Scripts\pip.exe install -q --upgrade pip
+# Through python -m pip: Windows won't let pip.exe replace itself, and
+# printed a red "To modify pip" error here.
+& .\.venv\Scripts\python.exe -m pip install -q --upgrade pip
 Write-Host "   installing dependencies (a few minutes on first run)..." -ForegroundColor DarkGray
-& .\.venv\Scripts\pip.exe install -q -r requirements.txt
+& .\.venv\Scripts\python.exe -m pip install -q -r requirements.txt
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "Installing dependencies failed - see the messages above." -ForegroundColor Red
+    exit 1
+}
 Write-Host "ok dependencies installed" -ForegroundColor Green
 
 Write-Host ""

@@ -20,10 +20,17 @@ PENDING_SECONDS = 30
 _pending = None
 
 
-def _set_pending(intent, missing):
+def _set_pending(intent, missing, question=None):
     global _pending
     _pending = {"intent": dict(intent), "missing": missing,
+                "question": question,
                 "expires": time.monotonic() + PENDING_SECONDS}
+
+
+def _ask(intent, missing, question):
+    """Ask a question and hold the order until it is answered."""
+    _set_pending(intent, missing, question)
+    return {"speak": question, "blocked": True, "needs_answer": missing}
 
 
 def _take_pending():
@@ -38,6 +45,8 @@ def handle(transcript, confirm=None):
     """Run one utterance. `confirm` takes a preview dict, returns bool."""
     try:
         return _handle(transcript, confirm)
+    except b.NotLoggedIn as e:
+        return {"speak": str(e), "blocked": True, "broker_error": True}
     except b.BrokerError as e:
         # Only reads raise this - placing an order never does - so nothing
         # has been sent. Say so, rather than letting a failed read pass as
@@ -52,12 +61,24 @@ def _handle(transcript, confirm):
     intent = parse(transcript)
 
     pending = _take_pending()
+    if pending and intent["intent"] == "unknown":
+        # A misheard answer ("INTRODAY") is not a change of mind. Keep the
+        # order waiting and ask again, rather than dropping it.
+        _set_pending(pending["intent"], pending["missing"],
+                     pending.get("question"))
+        return {"speak": "I didn't catch that. "
+                         + (pending.get("question") or "Say it again."),
+                "blocked": True, "needs_answer": pending["missing"]}
     if pending and intent["intent"] == "index_answer" \
             and pending["missing"] == "underlying":
         intent = {**pending["intent"], "underlying": intent["underlying"]}
     elif pending and intent["intent"] == "number_answer" \
             and pending["missing"] == "strike":
-        intent = {**pending["intent"], "number_spans": intent["number_spans"]}
+        # Added to what was said before, not in place of it: "exit two
+        # lots" then "23100" is two lots of the 23100.
+        intent = {**pending["intent"],
+                  "number_spans": (list(pending["intent"].get("number_spans")
+                                        or []) + intent["number_spans"])}
     elif pending and intent["intent"] == "number_answer" \
             and pending["missing"] == "quantity":
         spans = intent["number_spans"]
@@ -177,7 +198,11 @@ UNCLEAR = {
     "unclear_correction": lambda i: (
         "You changed your mind partway through, so say the whole command "
         "again."),
-    "number_unclear": lambda i: f"I couldn't read the number in \"{i['heard']}\".",
+    "number_unclear": lambda i: (
+        f"I heard \"{i['heard']}\" - did you mean "
+        f"{'four' if i['heard'].startswith('for') else 'two'}? Say the number "
+        f"again." if i["heard"].split()[0] in ("for", "to", "too")
+        else f"I couldn't read the number in \"{i['heard']}\"."),
     "quantity_ambiguous": lambda i: (
         "I heard two quantities. Say one." if 0.5 in i["quantities"] else
         f"I heard two quantities, {i['quantities'][0]:g} and "
@@ -235,6 +260,9 @@ def _equity_order(intent, confirm):
         if position is None:
             return {"speak": f"You don't hold any {company} to sell.",
                     "blocked": True}
+        working = _working_order(tsym, "S")
+        if working:
+            return _already_working(working, company)
         held = position["qty"]
         if intent.get("half"):
             if held < 2:
@@ -250,14 +278,10 @@ def _equity_order(intent, confirm):
         product = position.get("prd") or "C"
     else:
         if quantity is None:
-            _set_pending(intent, "quantity")
-            return {"speak": f"How many {company} shares?", "blocked": True,
-                    "needs_answer": "quantity"}
+            return _ask(intent, "quantity", f"How many {company} shares?")
         product = intent.get("product")
         if product is None:
-            _set_pending(intent, "product")
-            return {"speak": "Intraday or delivery?", "blocked": True,
-                    "needs_answer": "product"}
+            return _ask(intent, "product", "Intraday or delivery?")
 
     # Everything goes at market: a limit priced through the touch so it
     # fills now. A price said out loud is shown on the confirmation screen
@@ -316,9 +340,8 @@ _SPOKEN = {"CE": "call", "PE": "put"}
 
 def _ask_index(intent, what):
     """No index was named. Ask, and hold the order until the answer."""
-    _set_pending(intent, "underlying")
-    return {"speak": f"Which index {what} - Nifty, Bank Nifty or Sensex?",
-            "blocked": True, "needs_answer": "underlying"}
+    return _ask(intent, "underlying",
+                f"Which index {what} - Nifty, Bank Nifty or Sensex?")
 
 
 def _ladder_and_spot(name):
@@ -521,6 +544,26 @@ def _handle_option(intent, confirm):
                     value=value, opening=True, segment="options")
 
 
+def _working_order(tsym, side):
+    """An order already working on this symbol and side, if any.
+
+    Saying "exit" again while the first exit is still resting would send a
+    second sell against the same position - and if both fill, a short.
+    """
+    for o in b.order_book():
+        if (o.get("tsym") == tsym and o.get("trantype") == side
+                and o.get("status") not in b.FINAL):
+            return o
+    return None
+
+
+def _already_working(order, what):
+    return {"speak": f"An exit for {what} is already working - "
+                     f"{order.get('qty')} at {order.get('prc')}. I won't send "
+                     f"another. Wait for it to fill, or cancel it in the "
+                     f"broker app.", "blocked": True}
+
+
 def _exit_option(intent, confirm):
     opt = intent["option_type"]
     word = _SPOKEN[opt]
@@ -584,12 +627,8 @@ def _exit_option(intent, confirm):
         indices = {c["underlying"] for _, c in held}
         listed = " and ".join(friendly(p["symbol"]) for p, _ in held)
         if len(indices) > 1:
-            _set_pending(intent, "underlying")
-            return {"speak": f"You hold {listed}. Which index?",
-                    "blocked": True, "needs_answer": "underlying"}
-        _set_pending(intent, "strike")
-        return {"speak": f"You hold {listed}. Which strike?",
-                "blocked": True, "needs_answer": "strike"}
+            return _ask(intent, "underlying", f"You hold {listed}. Which index?")
+        return _ask(intent, "strike", f"You hold {listed}. Which strike?")
 
     pos, c = held[0]
     qty = abs(pos["qty"])
@@ -628,6 +667,9 @@ def _exit_option(intent, confirm):
         pnl = round((ltp - pos["avg_price"]) * pos["qty"], 2)
 
     side = "S" if pos["qty"] > 0 else "B"
+    working = _working_order(pos["symbol"], side)
+    if working:
+        return _already_working(working, friendly(pos["symbol"]))
     view = b.quote_view(q)
     price = b.marketable_price(side, view)
     if price is None:
@@ -702,7 +744,20 @@ def _execute(side, tsym, quantity, price, exchange, product, did, value,
                          "again.",
                 "outcome": "unknown", "data": sent}
 
-    state = b.wait_for_outcome(sent["order_no"])
+    try:
+        state = b.wait_for_outcome(sent["order_no"])
+    except (Exception, KeyboardInterrupt) as e:
+        # The order has been sent. Whatever went wrong while watching it -
+        # a garbled reply, Ctrl-C - it may be live, so it is counted and
+        # the user is told to look, never left to guess.
+        if opening:
+            safety.record(value, segment)
+        stopped = ("you stopped the wait" if isinstance(e, KeyboardInterrupt)
+                   else "I lost track of it")
+        return {"speak": f"The order was sent, but {stopped}. It may be "
+                         f"live - check your order book before you try "
+                         f"again.",
+                "outcome": "unknown", "confirmed": True, "data": sent}
     status = state.get("status")
 
     filled, total = state.get("filled") or 0, state.get("quantity") or quantity

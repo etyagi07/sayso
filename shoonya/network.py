@@ -110,7 +110,7 @@ def check(lookup=None):
     ips = registered()
     if not ips:
         return "unset", ("No registered IP address saved for this account - "
-                         "run: python -m shoonya.login")
+                         f"run: {profile.cmd('shoonya.login')}")
     # Looked up at call time, not bound at import - so it can be stubbed.
     now = (lookup or current)()
     if now is None:
@@ -122,8 +122,9 @@ def check(lookup=None):
     return "mismatch", (f"You're on {now}, but this API key only works from "
                         f"{listed}. The broker will refuse logins and "
                         f"orders. Switch to that network, or add {now} on "
-                        f"{WHERE}, then run: python -m shoonya.network set "
-                        f"{' '.join(ips[:1] + [now])}")
+                        f"{WHERE}, then run: "
+                        + profile.cmd("shoonya.network", "set",
+                                      *(ips[:1] + [now])))
 
 
 # The broker's refusal is not documented, and has not been seen yet - so
@@ -141,7 +142,7 @@ def explain(message):
     tail = f" It's registered for {' or '.join(ips)}." if ips else ""
     return ("That looks like the internet-address check: this computer's "
             "address probably isn't one your API key accepts." + tail +
-            " Run: python -m shoonya.network")
+            " Run: " + profile.cmd("shoonya.network"))
 
 
 def _main(argv):

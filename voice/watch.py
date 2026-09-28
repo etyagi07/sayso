@@ -57,5 +57,7 @@ def _watch(order_no, what, every, limit):
 def _tell(text, outcome):
     colour = G if outcome == "filled" else (R if outcome == "rejected" else DIM)
     print(f"\n  {colour}> {text}{X}")
-    speak.sound(outcome)
-    speak.say(text)
+    # Kept: a fill must still be heard if it lands while the user is
+    # confirming or speaking.
+    speak.sound(outcome, keep=True)
+    speak.say(text, keep=True)

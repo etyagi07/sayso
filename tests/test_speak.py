@@ -154,6 +154,86 @@ def test_pressing_to_talk_stops_a_sound_too(played):
         assert played and played[0].stopped.is_set(), "sound still playing"
 
 
+@with_fake_audio(delay=5.0)
+def test_a_fill_is_not_thrown_away_by_a_keypress(played):
+    # A background fill queued while a new order's preview was being read
+    # was dropped when the user pressed y - they thought it still rested.
+    speak.say("buy one lot of the Nifty call, about 5,000 rupees")
+    time.sleep(0.1)
+    speak.sound("filled", keep=True)
+    speak.say("Nifty 23100 call filled at 80.", keep=True)
+    speak.interrupt()                       # the user pressed y
+    assert played[0].killed, "preview kept talking"
+    for p in list(played):
+        p.stopped.set()                     # let each 'finish' at once
+    deadline = time.monotonic() + 3
+    while len(played) < 3 and time.monotonic() < deadline:
+        for p in list(played):
+            p.stopped.set()
+        time.sleep(0.02)
+    assert [p.cmd[-1] for p in played[1:3]] == [
+        speak.SOUNDS["Darwin"]["filled"], "Nifty 23100 call filled at 80."], \
+        [p.cmd for p in played]
+
+
+@with_fake_audio(delay=5.0)
+def test_a_fill_cut_off_by_push_to_talk_is_replayed(played):
+    speak.say("Nifty 23100 call filled at 80.", keep=True)
+    time.sleep(0.1)
+    with speak.listening():
+        assert played[0].stopped.is_set(), "still speaking into the mic"
+        time.sleep(0.1)
+        assert len(played) == 1, "played while the mic was open"
+    deadline = time.monotonic() + 3
+    while len(played) < 2 and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert len(played) == 2 and played[1].cmd == played[0].cmd, \
+        [p.cmd for p in played]
+    assert not played[1].mic_open_at_start
+
+
+@with_fake_audio(delay=5.0)
+def test_stale_chatter_is_not_read_after_you_speak(played):
+    speak.say("first")                      # playing
+    time.sleep(0.1)
+    speak.say("I didn't follow that.")      # queued, not news
+    with speak.listening():
+        pass
+    time.sleep(0.3)
+    assert all("didn't follow" not in p.cmd[-1] for p in played), \
+        [p.cmd for p in played]
+
+
+def test_windows_commands_are_built_safely():
+    # Built, not run: there is no Windows here. Curly apostrophes ended the
+    # PowerShell string, so the phrase was never heard; sounds now come
+    # from distinct files, with the old system sound if a file is missing.
+    import os
+    import tempfile
+    built = []
+    saved = (speak.SYSTEM, speak._speak_process, os.environ.get("WINDIR"))
+    speak.SYSTEM = "Windows"
+    speak._speak_process = built.append
+    media = Path(tempfile.mkdtemp())
+    (media / "Media").mkdir()
+    (media / "Media" / "tada.wav").write_bytes(b"")
+    os.environ["WINDIR"] = str(media)
+    try:
+        speak._say("Don\u2019t buy Reliance\u2019s call")
+        speak._play("filled")
+        speak._play("rejected")               # its file is missing here
+    finally:
+        speak.SYSTEM, speak._speak_process = saved[:2]
+        if saved[2] is None:
+            os.environ.pop("WINDIR", None)
+        else:
+            os.environ["WINDIR"] = saved[2]
+    said, filled, rejected = (c[-1] for c in built)
+    assert "Don''t buy Reliance''s" in said and "\u2019" not in said, said
+    assert "SoundPlayer" in filled and "tada.wav" in filled, filled
+    assert "SystemSounds]::Hand" in rejected, rejected
+
+
 if __name__ == "__main__":
     passed = failed = 0
     for name, fn in sorted(globals().items()):

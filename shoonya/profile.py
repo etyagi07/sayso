@@ -44,6 +44,29 @@ def limits_file():
     return ROOT / f".daily_limits{_tag()}.json"
 
 
+def cmd(module, *args, account=True):
+    """The command to run one of this project's modules, exactly as it must
+    be typed here: this project's Python (`.venv/bin/python` on a Mac,
+    `.\.venv\Scripts\python.exe` on Windows - bare `python` is missing or
+    the wrong one), plus `--account NAME` when an account is in use, so a
+    hint never quietly acts on the default account instead."""
+    exe = sys.executable
+    try:
+        rel = os.path.relpath(exe)
+        if not rel.startswith(".."):
+            exe = rel
+    except ValueError:
+        pass                                  # another drive, on Windows
+    if os.name == "nt" and not os.path.isabs(exe):
+        exe = ".\\" + exe
+    if " " in exe:
+        exe = f'& "{exe}"' if os.name == "nt" else f'"{exe}"'
+    parts = [exe, "-m", module, *args]
+    if account and name():
+        parts += ["--account", name()]
+    return " ".join(parts)
+
+
 def label():
     return name() or "default"
 

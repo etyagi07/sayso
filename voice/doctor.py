@@ -48,14 +48,14 @@ def main():
         check("core packages", True, "numpy, sounddevice")
     except ImportError as e:
         check("core packages", False, str(e),
-              "pip install -r requirements.txt")
+              profile.cmd("pip", "install", "-r", "requirements.txt", account=False))
 
     try:
         import NorenRestApiPy  # noqa: F401
         check("broker sdk", True, "NorenRestApiPy")
     except ImportError:
         check("broker sdk", False, "missing",
-              "pip install -r requirements.txt")
+              profile.cmd("pip", "install", "-r", "requirements.txt", account=False))
 
     from voice import config
     backend = config.backend()
@@ -65,14 +65,14 @@ def main():
             check("speech backend", True, "mlx (apple silicon)")
         except ImportError:
             check("speech backend", False, "mlx-whisper not installed",
-                  "pip install -r requirements.txt")
+                  profile.cmd("pip", "install", "-r", "requirements.txt", account=False))
     else:
         try:
             import faster_whisper  # noqa: F401
             check("speech backend", True, "faster-whisper (cpu)")
         except ImportError:
             check("speech backend", False, "faster-whisper not installed",
-                  "pip install -r requirements.txt")
+                  profile.cmd("pip", "install", "-r", "requirements.txt", account=False))
 
     try:
         import sounddevice as sd
@@ -107,7 +107,7 @@ def main():
 
     check("microphone calibrated", config.is_calibrated(),
           f"threshold {config.get('silence_rms')}",
-          "python -m voice.calibrate")
+          profile.cmd("voice.calibrate"))
 
     session_ok = False
     try:
@@ -116,10 +116,10 @@ def main():
         session_ok = api.resume() and _session_alive(api)
         check("broker session", session_ok,
               "logged in" if session_ok else "expired or absent",
-              "python -m shoonya.login    (tokens last one trading day)")
+              profile.cmd("shoonya.login") + "    (tokens last one trading day)")
     except Exception as e:
         check("broker session", False, f"{type(e).__name__}: {str(e)[:40]}",
-              "python -m shoonya.login")
+              profile.cmd("shoonya.login"))
 
     if session_ok:
         try:
@@ -154,7 +154,7 @@ def main():
               f"fix the highlighted lines above, then run this again.\n")
         return 1
 
-    summary = f"  {G}ready{X} - run: python -m voice.main"
+    summary = f"  {G}ready{X} - run: {profile.cmd('voice.main')}"
     if notes:
         names = ", ".join(r[0] for r in notes)
         summary += f"\n  {Y}limited:{X} {DIM}{names} - see the note above{X}"

@@ -80,6 +80,8 @@ PHRASES = [
     (r"\bpick\s+up\b", "buy"),
     (r"\byears?\s+bank\b", "yesbank"),
     (r"\byes\s+bank\b", "yesbank"),
+    # Whisper's spellings of intraday: "INTRODAY", "intra day".
+    (r"\bintr[ao]\s*day\b", "intraday"),
     (r"\bcall\s+option\b", "call"),
     (r"\bput\s+option\b", "put"),
 ]

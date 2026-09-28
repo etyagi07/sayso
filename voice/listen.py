@@ -13,6 +13,7 @@ import sys
 import numpy as np
 import sounddevice as sd
 
+from shoonya import profile
 from voice import config, speak
 
 SAMPLE_RATE = 16000          # what Whisper expects
@@ -37,7 +38,7 @@ def _threshold():
     if value is None:
         raise NotCalibrated(
             "This microphone has not been measured yet.\n"
-            "  Run: python -m voice.calibrate"
+            f"  Run: {profile.cmd('voice.calibrate')}"
         )
     return value
 

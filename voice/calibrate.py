@@ -40,6 +40,28 @@ def _measure(seconds, label):
     return levels
 
 
+# Below this, a microphone is delivering nothing at all - which is what a
+# denied permission looks like, not a quiet room.
+SILENT = 0.0005
+
+
+def _no_sound_help():
+    print(f"\n{R}The microphone is sending no sound at all.{X}")
+    print("  That is almost always permission:")
+    if sys.platform == "darwin":
+        print("  System Settings > Privacy & Security > Microphone - allow "
+              "your terminal app,")
+        print("  then quit the terminal completely (Cmd-Q), reopen it, and "
+              "run this again.")
+    elif sys.platform.startswith("win"):
+        print("  Settings > Privacy & security > Microphone - turn on "
+              "\"Let desktop apps")
+        print("  access your microphone\", then run this again.")
+    else:
+        print("  Check the input device and its volume, then run this again.")
+    return 1
+
+
 def calibrate():
     try:
         device = sd.query_devices(kind="input")
@@ -57,6 +79,10 @@ def calibrate():
         print(f"{DIM}Step 1 of 2 - stay quiet for 3 seconds.{X}")
         input("  press Enter when ready: ")
         quiet = _measure(3, "silence")
+        if max(quiet) < SILENT:
+            # Saved as-is, this became a threshold of 0 and a crash - and
+            # then every recording ran its full 15 seconds.
+            return _no_sound_help()
         floor = float(np.percentile(quiet, 90))
         if floor <= NOISY:
             break
@@ -77,6 +103,8 @@ def calibrate():
     print(f"\n  room floor : {floor:.4f}")
     print(f"  your speech: {speech:.4f}")
 
+    if speech < SILENT:
+        return _no_sound_help()
     if speech < floor * 2:
         print(f"\n{R}Speech is barely above the background ({speech:.4f} vs "
               f"{floor:.4f}).{X}")
@@ -91,7 +119,8 @@ def calibrate():
     # speech level keeps quieter words from ending it early. On the
     # machine this was developed on (floor 0.013, speech 0.19) this gives
     # 0.033, matching the value that was hand-tuned over several attempts.
-    threshold = round(min(floor * 2.5, speech / 3), 4)
+    floor = max(floor, SILENT)
+    threshold = max(round(min(floor * 2.5, speech / 3), 4), SILENT)
     config.save(silence_rms=threshold)
 
     print(f"\n{G}Calibrated.{X} threshold {threshold:.4f}")

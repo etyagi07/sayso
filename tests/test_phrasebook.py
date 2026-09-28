@@ -80,6 +80,12 @@ WORKS = [
      {"intent": "option_buy", "number_spans": [["two"], ["25200"]],
       "strike_override": ["25300"]}),
     # --- stocks ------------------------------------------------------------
+    # intraday, however Whisper spells it
+    ("INTRODAY.", {"intent": "product_answer", "product": "I"}),
+    ("intra day", {"intent": "product_answer", "product": "I"}),
+    ("intra-day", {"intent": "product_answer", "product": "I"}),
+    ("buy 1 yes bank intra day", {"intent": "order", "product": "I",
+                                  "name": "yesbank"}),
     ("Buy 1 Yes Bank intraday.", {"intent": "order", "side": "B",
                                   "quantity": 1, "name": "yesbank",
                                   "product": "I"}),
@@ -159,6 +165,15 @@ REFUSED = [
     ("buy nifty call on sensex", "index_ambiguous"),
     ("sell 10 yes bank 20", "quantity_ambiguous"),
     ("buy nifty call no wait sell", "unclear_correction"),
+    # "four" heard as "for", "two" as "to": a number that came through as a
+    # word must not quietly become 1 lot - or the whole position on exit
+    ("buy nifty call for lots", "number_unclear"),
+    ("exit nifty call for lots", "number_unclear"),
+    ("buy for nifty calls", "number_unclear"),
+    ("buy nifty call to lots", "number_unclear"),
+    # call and put both said, with a correction word as well
+    ("buy nifty call, put, sorry, two lots", "option_ambiguous"),
+    ("buy nifty put call sorry sensex", "option_ambiguous"),
 ]
 
 

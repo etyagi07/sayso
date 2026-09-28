@@ -77,6 +77,11 @@ and ₹55.25 total. Each leg is 65 units — one Nifty lot.*
 
 ![Buying and selling YESBANK by voice](docs/demo.png)
 
+*From the first version, on 23 September 2026. It shows older screens: the
+spoken "at 23.20" was used as the limit price then. Today every order goes
+at market, and a price you say is only shown on the confirmation screen —
+press `p` there to set one.*
+
 The same trades, in Shoonya's own order book — timestamps matching the
 terminal session exactly:
 
@@ -118,14 +123,22 @@ first voice-placed trade.
 
 ## Setup
 
-Requires Python 3.12+, a microphone, and a Shoonya account with API access.
-Runs on macOS and Windows; speech recognition uses MLX on Apple Silicon and
-faster-whisper elsewhere, both fully local.
+Requires Python 3.12 or 3.13, a microphone, and a Shoonya account with API
+access. Tested on macOS and Windows 11; speech recognition uses MLX on Apple
+Silicon and faster-whisper elsewhere, both fully local. Get the code with
+`git clone https://github.com/etyagi07/sayso.git`, or **Code → Download ZIP**
+on GitHub. [TUTORIAL.md](TUTORIAL.md) walks through every step.
 
 ```bash
 ./setup.sh                                          # macOS / Linux
 powershell -ExecutionPolicy Bypass -File setup.ps1  # Windows
 ```
+
+> **On Windows**, wherever a command starts with `.venv/bin/python`, type
+> `.\.venv\Scripts\python.exe` instead — for example
+> `.\.venv\Scripts\python.exe -m voice.calibrate`. The setup script prints the
+> Windows forms for you, and every hint the program prints is already right
+> for your computer.
 
 Then, once per machine:
 
@@ -140,8 +153,8 @@ Once per trading day, then run it:
 .venv/bin/python -m voice.main
 ```
 
-If anything misbehaves, `python -m voice.doctor` checks each piece and names
-the fix.
+If anything misbehaves, `.venv/bin/python -m voice.doctor` checks each piece
+and names the fix.
 
 Login opens the broker's page in your browser. Afterwards it redirects to
 `127.0.0.1`, which shows a connection error — **that is expected**. The login
@@ -160,8 +173,9 @@ to this program.
 address without warning, and the broker's refusal doesn't say why — so
 login asks once for the registered address, and login, the app and
 `voice.doctor` all check this computer is on it before anything is sent.
-`python -m shoonya.network` checks on demand; the lookup is one request to a
-public what's-my-IP service, never on the order path.
+`.venv/bin/python -m shoonya.network` checks on demand; the lookup asks a public
+what's-my-IP service (a second one if the first doesn't answer), never on
+the order path.
 
 **More than one account?** Add `--account NAME` to login and to the app.
 Each account keeps its own login session and daily limits, and the app
@@ -213,8 +227,8 @@ follow …"* and an example, never a guess. Numbers have fixed roles:
 
 Corrections swap one thing of the same kind: "no wait, put", "make it two
 lots" (keeps the strike), "sorry, 23150" (keeps the lots). A bare "no" —
-"call, no put" — is asked about. "Close half" / "sell half" works, in whole
-lots or shares. Questions ("did I buy…", "is my call closed?") and "won't",
+"buy call, no put" — is asked about. "Close half my Nifty call" / "sell
+half my Yes Bank" works, in whole lots or shares. Questions ("did I buy…", "is my call closed?") and "won't",
 "can't", "don't" never trade. Company names are matched exactly; a partial
 name ("bharat") is confirmed, and near-misses are refused.
 
@@ -254,12 +268,12 @@ Every preview is read out before you press `y`, and every result after,
 with a sound first so you know what happened without looking away from the
 chart. There are only three to learn:
 
-| Sound (macOS) | Means |
-|---|---|
-| Glass | filled |
-| Tink | placed, waiting to fill |
-| Basso | rejected |
-| Pop | anything else — part filled, unknown, a question, or nothing done: listen to the words |
+| macOS | Windows | Means |
+|---|---|---|
+| Glass | Tada | filled |
+| Tink | Notify | placed, waiting to fill |
+| Basso | Critical Stop | rejected |
+| Pop | Ding | anything else — part filled, unknown, a question, or nothing done: listen to the words |
 
 Hear them, each followed by its meaning, with
 `.venv/bin/python -m voice.speak`. A resting
@@ -280,9 +294,12 @@ is asked about; an unknown one is refused, never guessed.
 
 ## Limitations
 
-- **Windows is written but untested.** The setup script, the faster-whisper
-  backend and Windows speech are in place, but no Windows machine was
-  available to run them. `voice.doctor` is the thing to send back.
+- **Windows is newer than macOS here.** It was first run end to end on
+  Windows 11 on 28 September 2026. Speech recognition runs on the CPU there,
+  so it is slower than on an Apple Silicon Mac, and each spoken phrase takes
+  a moment to start.
+- **Intraday orders stop at about 3:15 pm.** The broker squares off intraday
+  positions then and refuses new intraday orders; use delivery after that.
 - **No cancelling or modifying an order by voice.** Positions can be opened
   and closed by voice; a resting order has to be cancelled in the broker's
   app.
@@ -291,8 +308,6 @@ is asked about; an unknown one is refused, never guessed.
 - **Understanding is rule-based.** It handles a wide range of phrasings,
   corrections and questions, and unrecognised speech fails safe ("I didn't
   catch an instruction"), but it is not a language model.
-- **A strike correction drops an earlier quantity.** "Buy 2 lots of call
-  23100, no, 23050" becomes one lot. The preview shows the lots.
 
 ## Notes on the Shoonya API
 

@@ -103,7 +103,8 @@ def connect(interactive=True):
     if api.resume() and _session_alive(api):
         return api
     if not interactive:
-        raise RuntimeError("No valid cached session; run `python -m shoonya.login` first.")
+        raise RuntimeError(f"No valid cached session; run "
+                           f"`{profile.cmd('shoonya.login')}` first.")
     api.login_interactive()
     return api
 

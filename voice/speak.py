@@ -30,7 +30,7 @@ SYSTEM = platform.system()
 # else - part filled, unknown, a question, a refusal - shares one sound that
 # means "listen to the words". Few enough to know by ear mid-trade.
 _MAC = "/System/Library/Sounds/"
-_LISTEN = {"Darwin": _MAC + "Pop.aiff", "Windows": "Question"}
+_LISTEN = {"Darwin": _MAC + "Pop.aiff", "Windows": "Windows Ding.wav"}
 SOUNDS = {
     "Darwin": {
         "filled": _MAC + "Glass.aiff",       # bright - done
@@ -39,12 +39,19 @@ SOUNDS = {
         **{o: _LISTEN["Darwin"]
            for o in ("partial", "unknown", "question", "blocked")},
     },
+    # Files in C:\Windows\Media, present on every Windows 10 and 11. The
+    # built-in system sounds can't be used: in the default scheme filled
+    # and resting played the same file, and the question sound was silent.
     "Windows": {
-        "filled": "Asterisk", "resting": "Exclamation", "rejected": "Hand",
+        "filled": "tada.wav", "resting": "notify.wav",
+        "rejected": "Windows Critical Stop.wav",
         **{o: _LISTEN["Windows"]
            for o in ("partial", "unknown", "question", "blocked")},
     },
 }
+# If a file above is missing, the nearest system sound.
+_WINDOWS_FALLBACK = {"filled": "Asterisk", "resting": "Exclamation",
+                     "rejected": "Hand"}
 
 MONTHS = {"Jan": "January", "Feb": "February", "Mar": "March",
           "Apr": "April", "Jun": "June", "Jul": "July", "Aug": "August",
@@ -59,6 +66,8 @@ _worker = None
 _voice = None
 _current = None           # the speech or sound process playing now, if any
 _running = False          # the worker is part-way through an item
+_current_item = None      # ...and this is it
+_generation = 0           # bumped whenever the chatter is cut short
 _lock = threading.Lock()
 
 
@@ -125,7 +134,7 @@ def for_speech(text):
 
 
 def _run(item):
-    kind, payload = item
+    kind, payload, _keep, _gen = item
     try:
         if kind == "sound":
             _play(payload)
@@ -144,9 +153,19 @@ def _play(outcome):
     if SYSTEM == "Darwin":
         _speak_process(["afplay", sound])
     elif SYSTEM == "Windows":
-        _speak_process(["powershell", "-NoProfile", "-Command",
-                        f"[System.Media.SystemSounds]::{sound}.Play(); "
-                        f"Start-Sleep -Milliseconds 400"])
+        import os
+        path = os.path.join(os.environ.get("WINDIR", "C:\\Windows"), "Media",
+                            sound)
+        if os.path.exists(path):
+            quoted = path.replace("'", "''")
+            _speak_process(["powershell", "-NoProfile", "-Command",
+                            f"(New-Object System.Media.SoundPlayer "
+                            f"'{quoted}').PlaySync()"])
+        else:
+            fallback = _WINDOWS_FALLBACK.get(outcome, "Asterisk")
+            _speak_process(["powershell", "-NoProfile", "-Command",
+                            f"[System.Media.SystemSounds]::{fallback}.Play(); "
+                            f"Start-Sleep -Milliseconds 400"])
 
 
 def _say(text):
@@ -154,7 +173,9 @@ def _say(text):
     if SYSTEM == "Darwin":
         cmd = ["say", "-r", rate] + (["-v", _voice] if _voice else []) + [text]
     elif SYSTEM == "Windows":
-        safe = text.replace("'", "''")
+        # PowerShell treats curly quotes as quote marks too: an unescaped
+        # "Don\u2019t" ended the string and the phrase was never heard.
+        safe = re.sub("[\u2018\u2019\u201a\u201b]", "'", text).replace("'", "''")
         cmd = ["powershell", "-NoProfile", "-Command",
                "Add-Type -AssemblyName System.Speech; "
                "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
@@ -195,7 +216,7 @@ def _speak_process(cmd):
 
 
 def _loop():
-    global _running
+    global _running, _current_item
     while True:
         item = _queue.get()
         # Anything announced while the user is recording waits until they
@@ -203,13 +224,16 @@ def _loop():
         while _mic_open.is_set():
             time.sleep(0.05)
         with _lock:
-            _running = True
+            _running, _current_item = True, item
             _idle.clear()
+            # Chatter queued before the user cut it short is stale now.
+            stale = not item[2] and item[3] != _generation
         try:
-            _run(item)
+            if not stale:
+                _run(item)
         finally:
             with _lock:
-                _running = False
+                _running, _current_item = False, None
                 if _queue.empty():
                     _idle.set()
             _queue.task_done()
@@ -223,22 +247,27 @@ def _start():
         _worker.start()
 
 
-def say(text):
-    """Queue something to be spoken. Returns immediately."""
+def say(text, keep=False):
+    """Queue something to be spoken. Returns immediately.
+
+    `keep` marks news about an order - a result, a fill. A keypress cuts
+    previews short but never throws that away: a dropped "filled" left the
+    user believing an order was still waiting.
+    """
     if not text or not enabled():
         return
     _start()
     _idle.clear()
-    _queue.put(("say", for_speech(text)))
+    _queue.put(("say", for_speech(text), keep, _generation))
 
 
-def sound(outcome):
+def sound(outcome, keep=False):
     """Queue the sound for an order outcome."""
     if not outcome or not enabled():
         return
     _start()
     _idle.clear()
-    _queue.put(("sound", outcome))
+    _queue.put(("sound", outcome, keep, _generation))
 
 
 def announce(result):
@@ -248,29 +277,43 @@ def announce(result):
     question back, or a refusal - so "nothing was sent" can be heard
     without listening to why.
     """
+    keep = bool(result.get("outcome"))     # what happened to an order
     if result.get("outcome"):
-        sound(result["outcome"])
+        sound(result["outcome"], keep)
     elif result.get("needs_answer") or result.get("needs_clarification"):
         sound("question")
     elif result.get("blocked"):
         sound("blocked")
-    say(result.get("speak"))
+    say(result.get("speak"), keep)
+
+
+def _drain():
+    """Empty the queue. -> the items marked keep, in order."""
+    kept = []
+    while True:
+        try:
+            item = _queue.get_nowait()
+        except queue.Empty:
+            return kept
+        _queue.task_done()
+        if item[2]:
+            kept.append(item)
 
 
 def interrupt():
-    """Stop talking now and drop anything queued.
+    """Stop the chatter now: previews and anything else not marked keep.
 
     Called when the user answers the confirmation box: once they have
     pressed a key, the rest of the preview is noise in front of the result.
+    News about an order - kept items - still plays.
     """
-    while True:
-        try:
-            _queue.get_nowait()
-            _queue.task_done()
-        except queue.Empty:
-            break
+    global _generation
     with _lock:
-        _stop_current()
+        _generation += 1
+        for item in _drain():
+            _queue.put(item)
+        if not (_current_item and _current_item[2]):
+            _stop_current()
         # Quiet only once the worker has actually finished what it was
         # playing - it reports that itself. Saying so here, early, is what
         # once let the microphone open over a sound.
@@ -304,13 +347,24 @@ class listening:
     """
 
     def __enter__(self):
-        interrupt()
-        # Only what was playing is left, and it was just stopped; the
-        # bound is for a process that ignores being stopped.
-        wait_until_quiet(2)
+        global _generation
         with _lock:
+            # Hold everything first, so nothing new can start...
             _mic_open.set()
+            _generation += 1
+            kept = _drain()
+            # ...then silence what is playing. News about an order that
+            # gets cut off is played again, first, once the mic closes.
+            if _current_item and _current_item[2]:
+                kept.insert(0, _current_item)
+            for item in kept:
+                _queue.put(item)
             _stop_current()
+        # The stopped process ends at once; the bound is for one that
+        # ignores being stopped.
+        deadline = time.monotonic() + 2
+        while _running and time.monotonic() < deadline:
+            time.sleep(0.01)
         return self
 
     def __exit__(self, *exc):
