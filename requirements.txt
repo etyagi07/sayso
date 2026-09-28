@@ -3,6 +3,9 @@ NorenRestApiOAuth==0.0.41
 requests==2.34.2
 websocket-client==1.9.2
 numpy==2.5.3
+# Timezone data. Windows has no system copy, and without it the app can't
+# tell Indian market hours - it crashes at start ("Asia/Kolkata" not found).
+tzdata==2026.4
 
 # Audio capture
 sounddevice==0.5.6

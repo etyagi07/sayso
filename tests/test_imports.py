@@ -87,6 +87,20 @@ def test_startup_banner_renders():
     assert "stocks" in text and "/order" in text, text
 
 
+def test_starts_without_a_system_timezone_database():
+    # Windows has no timezone database of its own; without the tzdata
+    # package the app died at start: "No time zone found with key
+    # Asia/Kolkata". Simulated here by pointing Python at an empty one.
+    import os
+    import subprocess
+    env = dict(os.environ, PYTHONTZPATH="/nonexistent",
+               PYTHONDONTWRITEBYTECODE="1")
+    run = subprocess.run([sys.executable, "-c", "import voice.agent"],
+                         cwd=str(Path(__file__).resolve().parent.parent),
+                         env=env, capture_output=True, text=True)
+    assert run.returncode == 0, run.stderr[-300:]
+
+
 def test_public_names_exist():
     for module, names in PUBLIC.items():
         mod = importlib.import_module(module)
